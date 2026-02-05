@@ -205,3 +205,29 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# --- DATA SCIENCE EXTRAS ---
+
+# Datasets (Nunca subas datos crudos o pesados)
+data/*.csv
+data/*.xlsx
+data/*.parquet
+data/*.sql
+data/*.zip
+
+# Modelos entrenados (Los archivos binarios de ML son pesados)
+models/*.pkl
+models/*.joblib
+models/*.onnx
+models/*.h5
+
+# Variables de entorno (Credenciales de APIs o BDs)
+.env
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
+
+# Reportes generados (HTML de perfiles de datos, etc.)
+reports/*.html
+reports/*.pdf
