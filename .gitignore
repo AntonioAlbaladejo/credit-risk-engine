@@ -221,6 +221,9 @@ models/*.joblib
 models/*.onnx
 models/*.h5
 
+# Resultados
+results/*.csv
+
 # Variables de entorno (Credenciales de APIs o BDs)
 .env
 
