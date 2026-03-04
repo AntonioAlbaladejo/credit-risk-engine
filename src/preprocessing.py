@@ -129,11 +129,11 @@ class DataPreprocessor:
 
         # Loan to income ratio
         df_fe["loan_to_income"] = df_fe["loan_amnt"] / (
-            df_fe["person_income"].replace(0, np.nan)
+            df_fe["person_income"].replace(0, 0.01)  # Avoid division by zero
         )
         # Employment length to age ratio
         df_fe["employ_to_age"] = df_fe["person_emp_length"] / (
-            df_fe["person_age"].replace(0, np.nan)
+            df_fe["person_age"].replace(0, 0.01)  # Avoid division by zero
         )
 
         # Age buckets

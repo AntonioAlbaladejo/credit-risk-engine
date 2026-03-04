@@ -36,7 +36,7 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# CORS - TODO Configure acconrding to security requirements (currently allows all origins, methods, and headers for simplicity)
+# CORS - TODO Configure according to security requirements (currently allows all origins, methods, and headers for simplicity)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -87,7 +87,7 @@ async def get_model_info():
     return predictor.get_model_info()
 
 
-# ==================== PREDICCIONES ====================
+# ==================== PREDICTIONS ====================
 
 
 @app.post("/predict", response_model=PredictionResponse)
