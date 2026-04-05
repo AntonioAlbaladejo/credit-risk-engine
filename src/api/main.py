@@ -46,21 +46,33 @@ app.add_middleware(
 )
 
 # Load model and preprocessor at startup
-predictor: CreditRiskPredictor = None
+_predictor: CreditRiskPredictor = None
+
+
+def get_predictor() -> CreditRiskPredictor:
+    """Get predictor instance, loading it lazily if needed"""
+    global _predictor
+    if _predictor is None:
+        try:
+            _predictor = CreditRiskPredictor(
+                MODEL_PATH, THRESHOLD_PATH, FEATURE_NAMES_PATH, PREPROCESSOR_PATH
+            )
+            logger.info("Model loaded successfully")
+        except Exception as e:
+            logger.error(f"Error loading model: {e}")
+            raise
+    return _predictor
 
 
 @app.on_event("startup")
 async def load_model():
     """Load the model when the application starts"""
-    global predictor
     try:
-        predictor = CreditRiskPredictor(
-            MODEL_PATH, THRESHOLD_PATH, FEATURE_NAMES_PATH, PREPROCESSOR_PATH
-        )
-        logger.info("Model loaded successfully at startup")
+        get_predictor()
     except Exception as e:
-        logger.error(f"Error loading model: {e}")
-        raise
+        logger.error(f"Error loading model at startup: {e}")
+        # Don't raise here - allow API to start even if model fails
+        # The error will be caught when endpoints try to use the predictor
 
 
 # ==================== HEALTH CHECK ====================
@@ -69,8 +81,18 @@ async def load_model():
 @app.get("/health", response_model=HealthCheck)
 async def health_check():
     """Verifies the status of the API and the model"""
+    try:
+        # Try to ensure model is loaded
+        predictor = get_predictor()
+        model_available = predictor is not None
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        model_available = False
+
     return HealthCheck(
-        status="healthy", model_loaded=predictor is not None, version=API_VERSION
+        status="healthy" if model_available else "unhealthy",
+        model_loaded=model_available,
+        version=API_VERSION,
     )
 
 
@@ -80,11 +102,14 @@ async def health_check():
 @app.get("/model/info", response_model=ModelInfo)
 async def get_model_info():
     """Returns information about the loaded model"""
-    if predictor is None:
+    try:
+        predictor = get_predictor()
+        return predictor.get_model_info()
+    except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model not loaded"
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Model not loaded: {str(e)}",
         )
-    return predictor.get_model_info()
 
 
 # ==================== PREDICTIONS ====================
@@ -100,18 +125,19 @@ async def predict(application: LoanApplication):
     Returns:
         PredictionResponse object with the prediction result, probabilities, risk level, and recommendation
     """
-    if predictor is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model not loaded"
-        )
-
     try:
+        predictor = get_predictor()
         features = application.dict()
         prediction = predictor.predict(features)
         return PredictionResponse(**prediction)
 
     except Exception as e:
         logger.error(f"Error processing prediction: {e}")
+        if "Model not loaded" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Model not loaded",
+            )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing prediction: {str(e)}",
@@ -123,12 +149,8 @@ async def predict_batch(request: BatchPredictionRequest):
     """
     Makes batch predictions for multiple loan applications.
     """
-    if predictor is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model not loaded"
-        )
-
     try:
+        predictor = get_predictor()
         features_list = [app.dict() for app in request.applications]
         predictions = predictor.batch_predict(features_list)
 
@@ -140,6 +162,11 @@ async def predict_batch(request: BatchPredictionRequest):
 
     except Exception as e:
         logger.error(f"Error processing batch prediction: {e}")
+        if "Model not loaded" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Model not loaded",
+            )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing batch prediction: {str(e)}",

@@ -91,6 +91,11 @@ class CreditRiskPredictor:
             # Preprocess the input data to get the format expected by the model
             X_processed = self.preprocessor.batch_preprocess(features_list)
 
+            # Handle empty input - return empty predictions list
+            if len(X_processed) == 0:
+                logger.debug("Empty batch received, returning empty predictions")
+                return []
+
             # Get default probabilities from the model
             probs_default = self.model.predict_proba(X_processed)[:, 1]
 

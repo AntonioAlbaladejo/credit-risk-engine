@@ -103,17 +103,104 @@ class DataPreprocessor:
                 f"loan_amnt must be between {MIN_LOAN_AMOUNT} and {MAX_LOAN_AMOUNT}"
             )
 
-        if data.get("person_income") <= 0:
-            raise ValueError(f"person_income must be greater than 0")
-
-        if data.get("loan_amnt") <= 0:
-            raise ValueError(f"loan_amnt must be greater than 0")
+        if data.get("person_income") < 0:
+            raise ValueError(f"person_income must be non-negative (0 is allowed)")
 
         if data.get("loan_int_rate") < 0:
             raise ValueError(f"loan_int_rate must be a positive value")
 
         if data.get("loan_percent_income") < 0 or data.get("loan_percent_income") > 1:
             raise ValueError(f"loan_percent_income must be between 0 and 1")
+
+    def _get_feature_names_from_preprocessor(self) -> List[str]:
+        """
+        Reconstructs feature names from the ColumnTransformer since get_feature_names_out()
+        may not be available due to sklearn version incompatibility.
+
+        The order matches the ColumnTransformer structure:
+        1. Numeric features (scaled, not renamed): 11 total
+        2. Categorical features (one-hot encoded): 29 total (4+6+7+6+6)
+
+        Returns:
+            List of 41 feature names in the order produced by preprocessor.transform()
+        """
+        try:
+            # Try to get feature names directly (works with newer sklearn)
+            return list(self.preprocessor.get_feature_names_out())
+        except (AttributeError, TypeError):
+            pass
+
+        # Fallback: reconstruct feature names based on ColumnTransformer structure
+        # This is necessary due to sklearn 1.2.2 -> 1.7.2 version mismatch
+
+        feature_names = []
+
+        # Numeric features (10 total) - passed through StandardScaler, names unchanged
+        numeric_features = [
+            "person_age",
+            "person_income",
+            "person_emp_length",
+            "loan_amnt",
+            "loan_int_rate",
+            "loan_percent_income",
+            "cb_person_cred_hist_length",
+            "loan_to_income",
+            "employ_to_age",
+            "default_flag",
+        ]
+        feature_names.extend(numeric_features)
+
+        # Categorical features (31 total after one-hot encoding)
+        # Order: person_home_ownership, loan_intent, loan_grade, cb_person_default_on_file, age_bucket, emp_length_bin
+        categorical_encoded = [
+            # person_home_ownership (4 categories)
+            "person_home_ownership_RENT",
+            "person_home_ownership_OWN",
+            "person_home_ownership_MORTGAGE",
+            "person_home_ownership_OTHER",
+            # loan_intent (6 categories)
+            "loan_intent_PERSONAL",
+            "loan_intent_EDUCATION",
+            "loan_intent_MEDICAL",
+            "loan_intent_VENTURE",
+            "loan_intent_HOMEIMPROVEMENT",
+            "loan_intent_DEBTCONSOLIDATION",
+            # loan_grade (7 categories)
+            "loan_grade_A",
+            "loan_grade_B",
+            "loan_grade_C",
+            "loan_grade_D",
+            "loan_grade_E",
+            "loan_grade_F",
+            "loan_grade_G",
+            # cb_person_default_on_file (2 categories - binary one-hot)
+            "cb_person_default_on_file_0",
+            "cb_person_default_on_file_1",
+            # age_bucket (6 categories from pd.cut)
+            "age_bucket_18-24",
+            "age_bucket_25-34",
+            "age_bucket_35-44",
+            "age_bucket_45-54",
+            "age_bucket_55-64",
+            "age_bucket_65+",
+            # emp_length_bin (6 categories from pd.cut)
+            "emp_length_bin_0",
+            "emp_length_bin_1",
+            "emp_length_bin_2-3",
+            "emp_length_bin_4-5",
+            "emp_length_bin_6-10",
+            "emp_length_bin_10+",
+        ]
+        feature_names.extend(categorical_encoded)
+
+        # Verify we have the expected number
+        if len(feature_names) != 41:
+            logger.warning(
+                f"Expected 41 features but generated {len(feature_names)}. "
+                f"This may indicate a mismatch in preprocessor configuration."
+            )
+
+        return feature_names
 
     def _create_derived_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -131,6 +218,7 @@ class DataPreprocessor:
         df_fe["loan_to_income"] = df_fe["loan_amnt"] / (
             df_fe["person_income"].replace(0, 0.01)  # Avoid division by zero
         )
+
         # Employment length to age ratio
         df_fe["employ_to_age"] = df_fe["person_emp_length"] / (
             df_fe["person_age"].replace(0, 0.01)  # Avoid division by zero
@@ -163,7 +251,7 @@ class DataPreprocessor:
             data: Dictionary with raw features
 
         Returns:
-            DataFrame transformed with features in the expected order
+            DataFrame with only the 17 selected features in correct order
         """
         try:
             # Validate input data
@@ -180,11 +268,27 @@ class DataPreprocessor:
             # Apply preprocessor (imputation, scaling, one-hot encoding)
             X_transformed = self.preprocessor.transform(df_fe)
 
-            # Convert to DataFrame selecting only the features expected by the model
-            X_df = pd.DataFrame(X_transformed, columns=self.feature_names)
-            logger.debug(f"Data transformed successfully")
+            # Get feature names - use the reconstructed method
+            feature_names_all = self._get_feature_names_from_preprocessor()
 
-            return X_df
+            # Create DataFrame with all transformed features
+            X_df_all = pd.DataFrame(X_transformed, columns=feature_names_all)
+            logger.debug(f"Data transformed. Initial shape: {X_df_all.shape}")
+
+            # Select only the features that the model was trained on
+            # self.feature_names contains the 17 selected features
+            try:
+                X_df_selected = X_df_all[self.feature_names]
+                logger.debug(
+                    f"Selected {len(self.feature_names)} features. Final shape: {X_df_selected.shape}"
+                )
+            except KeyError as e:
+                logger.error(
+                    f"Could not select features. Available: {list(X_df_all.columns)}, Needed: {self.feature_names}"
+                )
+                raise
+
+            return X_df_selected
 
         except Exception as e:
             logger.error(f"Error preprocessing: {e}")
@@ -198,9 +302,16 @@ class DataPreprocessor:
             data_list: List of dictionaries with raw features
 
         Returns:
-            DataFrame transformed with all records
+            DataFrame with only the 17 selected features for all records
         """
         try:
+            # Handle empty list case
+            if not data_list:
+                logger.debug(
+                    "Empty batch received, returning empty DataFrame with correct columns"
+                )
+                return pd.DataFrame(columns=self.feature_names)
+
             # Validate each record in the batch
             for i, data in enumerate(data_list):
                 try:
@@ -217,11 +328,28 @@ class DataPreprocessor:
             # Apply preprocessor
             X_transformed = self.preprocessor.transform(df_fe)
 
-            # Convert to DataFrame
-            X_df = pd.DataFrame(X_transformed, columns=self.feature_names)
-            logger.debug(f"Batch of {len(data_list)} records transformed successfully")
+            # Get feature names - use the reconstructed method
+            feature_names_all = self._get_feature_names_from_preprocessor()
 
-            return X_df
+            # Create DataFrame with all transformed features
+            X_df_all = pd.DataFrame(X_transformed, columns=feature_names_all)
+            logger.debug(
+                f"Batch of {len(data_list)} records transformed. Initial shape: {X_df_all.shape}"
+            )
+
+            # Select only the features that the model was trained on
+            try:
+                X_df_selected = X_df_all[self.feature_names]
+                logger.debug(
+                    f"Selected {len(self.feature_names)} features. Final shape: {X_df_selected.shape}"
+                )
+            except KeyError as e:
+                logger.error(
+                    f"Could not select features. Available: {list(X_df_all.columns)}, Needed: {self.feature_names}"
+                )
+                raise
+
+            return X_df_selected
 
         except Exception as e:
             logger.error(f"Error in batch preprocessing: {e}")
@@ -236,3 +364,18 @@ class DataPreprocessor:
             "num_features_after_preprocessing": len(self.feature_names),
             "final_features": self.feature_names,
         }
+
+    def get_transformed_feature_names(self) -> List[str]:
+        """
+        Returns the names of features after transformation.
+        Tries to get them from the preprocessor, falls back to generic names.
+        """
+        try:
+            # Try to get feature names from preprocessor (sklearn 1.3+)
+            return list(self.preprocessor.get_feature_names_out())
+        except (AttributeError, TypeError):
+            # Fallback: generate generic names based on output shape
+            # This is a workaround for sklearn version compatibility
+            return [
+                str(i) for i in range(len(self.feature_names) * 2)
+            ]  # Estimate based on one-hot encoding

@@ -47,7 +47,7 @@ class LoanApplication(BaseModel):
     """Schema for an individual loan application with raw data"""
 
     person_age: int = Field(..., ge=MIN_AGE, le=MAX_AGE, description="Applicant's age")
-    person_income: float = Field(..., ge=0, description="Annual income in dollars")
+    person_income: float = Field(..., ge=0, description="Annual income in dollars (0 allowed for no income)")
     person_emp_length: float = Field(
         ..., ge=MIN_EMP_LENGTH, le=MAX_EMP_LENGTH, description="Years of employment"
     )
