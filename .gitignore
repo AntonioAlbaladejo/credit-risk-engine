@@ -234,3 +234,5 @@ results/*.csv
 # Reportes generados (HTML de perfiles de datos, etc.)
 reports/*.html
 reports/*.pdf
+
+*/settings.json
