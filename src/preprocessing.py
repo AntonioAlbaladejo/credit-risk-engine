@@ -1,6 +1,5 @@
 import joblib
 import pandas as pd
-import numpy as np
 from pathlib import Path
 from typing import Dict, List
 import logging
@@ -104,13 +103,13 @@ class DataPreprocessor:
             )
 
         if data.get("person_income") < 0:
-            raise ValueError(f"person_income must be non-negative (0 is allowed)")
+            raise ValueError("person_income must be non-negative (0 is allowed)")
 
         if data.get("loan_int_rate") < 0:
-            raise ValueError(f"loan_int_rate must be a positive value")
+            raise ValueError("loan_int_rate must be a positive value")
 
         if data.get("loan_percent_income") < 0 or data.get("loan_percent_income") > 1:
-            raise ValueError(f"loan_percent_income must be between 0 and 1")
+            raise ValueError("loan_percent_income must be between 0 and 1")
 
     def _get_feature_names_from_preprocessor(self) -> List[str]:
         """
@@ -256,14 +255,14 @@ class DataPreprocessor:
         try:
             # Validate input data
             self._validate_input(data)
-            logger.debug(f"Input data validated successfully")
+            logger.debug("Input data validated successfully")
 
             # Convert dictionary to DataFrame
             df = pd.DataFrame([data])
 
             # Create derived features
             df_fe = self._create_derived_features(df)
-            logger.debug(f"Derived features created")
+            logger.debug("Derived features created")
 
             # Apply preprocessor (imputation, scaling, one-hot encoding)
             X_transformed = self.preprocessor.transform(df_fe)
@@ -284,7 +283,7 @@ class DataPreprocessor:
                 )
             except KeyError as e:
                 logger.error(
-                    f"Could not select features. Available: {list(X_df_all.columns)}, Needed: {self.feature_names}"
+                    f"Could not select features. Available: {list(X_df_all.columns)}, Needed: {self.feature_names}. Error: {e}"
                 )
                 raise
 
@@ -345,7 +344,7 @@ class DataPreprocessor:
                 )
             except KeyError as e:
                 logger.error(
-                    f"Could not select features. Available: {list(X_df_all.columns)}, Needed: {self.feature_names}"
+                    f"Could not select features. Available: {list(X_df_all.columns)}, Needed: {self.feature_names}. Error: {e}"
                 )
                 raise
 

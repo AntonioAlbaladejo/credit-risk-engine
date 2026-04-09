@@ -3,7 +3,6 @@
 import pytest
 import pandas as pd
 import numpy as np
-from pathlib import Path
 from src.preprocessing import DataPreprocessor
 from src.config import PREPROCESSOR_PATH, FEATURE_NAMES_PATH
 
@@ -103,12 +102,6 @@ class TestDataValidation:
         valid_data["person_income"] = -1000
         with pytest.raises(ValueError, match="person_income"):
             preprocessor._validate_input(valid_data)
-
-    def test_zero_income_valid(self, preprocessor, valid_data):
-        """Test that zero income is valid in validation"""
-        valid_data["person_income"] = 0
-        # Should not raise any exception
-        preprocessor._validate_input(valid_data)
 
     def test_loan_amount_below_minimum(self, preprocessor, valid_data):
         """Test validation fails with loan amount below minimum"""

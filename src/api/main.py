@@ -1,7 +1,8 @@
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 import logging
-from pathlib import Path
+from contextlib import asynccontextmanager
+
 
 from src.config import (
     API_TITLE,
@@ -27,6 +28,23 @@ from src.api.schemas import (
 logging.basicConfig(level=LOG_LEVEL)
 logger = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage app startup and shutdown events"""
+    # Startup
+    try:
+        get_predictor()
+        logger.info("Model loaded at startup")
+    except Exception as e:
+        logger.error(f"Error loading model at startup: {e}")
+
+    yield  # App runs here
+
+    # Shutdown (optional cleanup)
+    logger.info("App shutting down")
+
+
 # Create FastAPI app
 app = FastAPI(
     title=API_TITLE,
@@ -34,6 +52,7 @@ app = FastAPI(
     description=API_DESCRIPTION,
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # CORS - TODO Configure according to security requirements (currently allows all origins, methods, and headers for simplicity)
@@ -62,17 +81,6 @@ def get_predictor() -> CreditRiskPredictor:
             logger.error(f"Error loading model: {e}")
             raise
     return _predictor
-
-
-@app.on_event("startup")
-async def load_model():
-    """Load the model when the application starts"""
-    try:
-        get_predictor()
-    except Exception as e:
-        logger.error(f"Error loading model at startup: {e}")
-        # Don't raise here - allow API to start even if model fails
-        # The error will be caught when endpoints try to use the predictor
 
 
 # ==================== HEALTH CHECK ====================
@@ -127,7 +135,12 @@ async def predict(application: LoanApplication):
     """
     try:
         predictor = get_predictor()
-        features = application.dict()
+        # Handle both Pydantic v1 and v2 - use model_dump() for v2, dict() for v1
+        features = (
+            application.model_dump()
+            if hasattr(application, "model_dump")
+            else application.dict()
+        )
         prediction = predictor.predict(features)
         return PredictionResponse(**prediction)
 
@@ -151,7 +164,11 @@ async def predict_batch(request: BatchPredictionRequest):
     """
     try:
         predictor = get_predictor()
-        features_list = [app.dict() for app in request.applications]
+        # Handle both Pydantic v1 and v2 - use model_dump() for v2, dict() for v1
+        features_list = [
+            app.model_dump() if hasattr(app, "model_dump") else app.dict()
+            for app in request.applications
+        ]
         predictions = predictor.batch_predict(features_list)
 
         return BatchPredictionResponse(

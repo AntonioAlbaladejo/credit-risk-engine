@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List
 from enum import Enum
 from src.config import (
@@ -47,7 +47,9 @@ class LoanApplication(BaseModel):
     """Schema for an individual loan application with raw data"""
 
     person_age: int = Field(..., ge=MIN_AGE, le=MAX_AGE, description="Applicant's age")
-    person_income: float = Field(..., ge=0, description="Annual income in dollars (0 allowed for no income)")
+    person_income: float = Field(
+        ..., ge=0, description="Annual income in dollars (0 allowed for no income)"
+    )
     person_emp_length: float = Field(
         ..., ge=MIN_EMP_LENGTH, le=MAX_EMP_LENGTH, description="Years of employment"
     )
@@ -75,8 +77,8 @@ class LoanApplication(BaseModel):
         ..., ge=0, description="Years of credit history"
     )
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "person_age": 35,
                 "person_income": 50000,
@@ -91,6 +93,7 @@ class LoanApplication(BaseModel):
                 "cb_person_cred_hist_length": 8,
             }
         }
+    )
 
 
 class PredictionResponse(BaseModel):
@@ -107,7 +110,7 @@ class PredictionResponse(BaseModel):
 class BatchPredictionRequest(BaseModel):
     """Schema for batch predictions"""
 
-    applications: List[LoanApplication] = Field(..., max_items=100)
+    applications: List[LoanApplication] = Field(..., max_length=100)
 
 
 class BatchPredictionResponse(BaseModel):

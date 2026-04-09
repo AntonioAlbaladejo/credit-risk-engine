@@ -6,12 +6,10 @@ from src.api.schemas import (
     LoanApplication,
     PredictionResponse,
     BatchPredictionRequest,
-    BatchPredictionResponse,
     HealthCheck,
     ModelInfo,
     HomeOwnershipEnum,
     LoanIntentEnum,
-    LoanGradeEnum,
 )
 
 
