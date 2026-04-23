@@ -123,18 +123,21 @@ class DataPreprocessor:
         Returns:
             List of 41 feature names in the order produced by preprocessor.transform()
         """
+
         try:
             # Try to get feature names directly (works with newer sklearn)
-            return list(self.preprocessor.get_feature_names_out())
+            all_names = list(self.preprocessor.get_feature_names_out())
+            # Remove prefixes like 'num__' and 'cat__'
+            feature_names = [
+                name.split("__", 1)[1] if "__" in name else name for name in all_names
+            ]
+            return feature_names
         except (AttributeError, TypeError):
             pass
 
         # Fallback: reconstruct feature names based on ColumnTransformer structure
-        # This is necessary due to sklearn 1.2.2 -> 1.7.2 version mismatch
-
         feature_names = []
 
-        # Numeric features (10 total) - passed through StandardScaler, names unchanged
         numeric_features = [
             "person_age",
             "person_income",

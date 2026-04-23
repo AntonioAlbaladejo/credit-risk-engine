@@ -4,6 +4,7 @@ anyio==4.13.0
 certifi==2026.2.25
 exceptiongroup==1.3.1
 fastapi==0.135.3
+uvicorn==0.46.0
 h11==0.16.0
 httpcore==1.0.9
 httpx==0.28.1
@@ -12,7 +13,7 @@ iniconfig==2.3.0
 joblib==1.5.3
 numpy==2.2.6
 nvidia-nccl-cu12==2.29.7
-packaging @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_packaging_1769093650/work
+packaging
 pandas==2.3.3
 pluggy==1.6.0
 pydantic==2.12.5
