@@ -210,8 +210,8 @@ credit-risk-engine/
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Python 3.8+
-- pip or conda
+- Python 3.10+ ([Install uv](https://docs.astral.sh/uv/getting-started/installation/))
+- uv (modern Python package manager, [installation guide](https://docs.astral.sh/uv/getting-started/installation/))
 
 ### Installation
 
@@ -220,11 +220,49 @@ credit-risk-engine/
 git clone https://github.com/yourusername/credit-risk-engine.git
 cd credit-risk-engine
 
-# Install required dependencies
-pip install -r requirements.txt
+# Install dependencies using uv (creates .venv automatically)
+uv sync
 
-# Launch Jupyter for notebook exploration
+# Activate the virtual environment
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Launch Jupyter for notebook exploration (optional)
 jupyter notebook
+```
+
+#### Alternative: Installing with pip (legacy)
+If you prefer traditional pip + venv setup:
+```bash
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -r requirements.txt.bak
+```
+
+#### Running the API
+```bash
+# Start the FastAPI server
+uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+
+# Or use uv to run it
+uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+```
+
+#### Running Tests
+```bash
+# Run all tests
+uv run pytest
+
+# Run with verbose output
+uv run pytest -v
+
+# Run specific test file
+uv run pytest tests/test_api.py -v
+```
+
+#### Development Dependencies
+Dev dependencies (pytest, etc.) are available in the `dev` group. To install them:
+```bash
+uv sync --all-groups
 ```
 ---
 

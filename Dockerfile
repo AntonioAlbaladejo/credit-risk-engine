@@ -1,13 +1,14 @@
 #########################################################
 FROM python:3.11-slim as builder
 
-RUN python -m venv /opt/venv
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-ENV PATH="/opt/venv/bin:$PATH"
+# Copy dependency files
+COPY pyproject.toml uv.lock* ./
 
-COPY requirements.txt .
-
-RUN pip install --no-cache-dir -r requirements.txt
+# Create virtual environment and install dependencies
+RUN uv sync --frozen --no-dev
 
 #########################################################
 FROM python:3.11-slim as runtime
@@ -20,11 +21,11 @@ WORKDIR /app
 
 RUN groupadd -r appgroup && useradd -r -g appgroup appuser
 
-COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /.venv /.venv
 
 RUN chown -R appuser:appgroup /app
 
-ENV PATH="/opt/venv/bin:$PATH"
+ENV PATH="/.venv/bin:$PATH"
 
 COPY . .
 

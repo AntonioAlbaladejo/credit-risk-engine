@@ -2,10 +2,7 @@
 
 import pytest
 import numpy as np
-import pandas as pd
-from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch
-import sys
+from unittest.mock import Mock
 
 
 # Mock the model loading to avoid numpy._core import issues
