@@ -75,6 +75,9 @@ dev = [
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore:datetime.datetime.utcfromtimestamp\\(\\) is deprecated:DeprecationWarning:pytz"
+]
 
 [tool.black]
 line-length = 100
