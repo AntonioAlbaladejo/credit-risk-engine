@@ -1,15 +1,16 @@
+import logging
+from pathlib import Path
+
 import joblib
 import pandas as pd
-from pathlib import Path
-from typing import Dict, List
-import logging
+
 from src.config import (
-    MIN_AGE,
     MAX_AGE,
-    MIN_EMP_LENGTH,
     MAX_EMP_LENGTH,
-    MIN_LOAN_AMOUNT,
     MAX_LOAN_AMOUNT,
+    MIN_AGE,
+    MIN_EMP_LENGTH,
+    MIN_LOAN_AMOUNT,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,7 +48,7 @@ class DataPreprocessor:
             logger.error(f"Error loading preprocessor: {e}")
             raise
 
-    def _validate_input(self, data: Dict) -> None:
+    def _validate_input(self, data: dict) -> None:
         """
         Validates that the input data is correct
 
@@ -111,7 +112,7 @@ class DataPreprocessor:
         if data.get("loan_percent_income") < 0 or data.get("loan_percent_income") > 1:
             raise ValueError("loan_percent_income must be between 0 and 1")
 
-    def _get_feature_names_from_preprocessor(self) -> List[str]:
+    def _get_feature_names_from_preprocessor(self) -> list[str]:
         """
         Reconstructs feature names from the ColumnTransformer since get_feature_names_out()
         may not be available due to sklearn version incompatibility.
@@ -245,7 +246,7 @@ class DataPreprocessor:
 
         return df_fe
 
-    def preprocess(self, data: Dict) -> pd.DataFrame:
+    def preprocess(self, data: dict) -> pd.DataFrame:
         """
         Transforms raw input data into the format expected by the model.
 
@@ -296,7 +297,7 @@ class DataPreprocessor:
             logger.error(f"Error preprocessing: {e}")
             raise
 
-    def batch_preprocess(self, data_list: List[Dict]) -> pd.DataFrame:
+    def batch_preprocess(self, data_list: list[dict]) -> pd.DataFrame:
         """
         Transforms multiple records into dataframe format expected by the model.
 
@@ -319,7 +320,7 @@ class DataPreprocessor:
                 try:
                     self._validate_input(data)
                 except ValueError as e:
-                    raise ValueError(f"Error in record {i}: {str(e)}")
+                    raise ValueError(f"Error in record {i}: {str(e)}") from e
 
             # Convert dictionary list to DataFrame
             df = pd.DataFrame(data_list)
@@ -357,7 +358,7 @@ class DataPreprocessor:
             logger.error(f"Error in batch preprocessing: {e}")
             raise
 
-    def get_feature_info(self) -> Dict:
+    def get_feature_info(self) -> dict:
         """Returns information about the expected features"""
         return {
             "valid_home_ownership": self.VALID_HOME_OWNERSHIP,
@@ -367,7 +368,7 @@ class DataPreprocessor:
             "final_features": self.feature_names,
         }
 
-    def get_transformed_feature_names(self) -> List[str]:
+    def get_transformed_feature_names(self) -> list[str]:
         """
         Returns the names of features after transformation.
         Tries to get them from the preprocessor, falls back to generic names.

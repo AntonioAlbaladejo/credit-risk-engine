@@ -1,8 +1,9 @@
 """Shared test fixtures and configuration"""
 
-import pytest
-import numpy as np
 from unittest.mock import Mock
+
+import numpy as np
+import pytest
 
 
 # Mock the model loading to avoid numpy._core import issues

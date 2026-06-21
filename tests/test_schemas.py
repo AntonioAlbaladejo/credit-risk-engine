@@ -2,14 +2,15 @@
 
 import pytest
 from pydantic import ValidationError
+
 from src.api.schemas import (
-    LoanApplication,
-    PredictionResponse,
     BatchPredictionRequest,
     HealthCheck,
-    ModelInfo,
     HomeOwnershipEnum,
+    LoanApplication,
     LoanIntentEnum,
+    ModelInfo,
+    PredictionResponse,
 )
 
 

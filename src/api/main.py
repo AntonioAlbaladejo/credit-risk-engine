@@ -1,28 +1,28 @@
-from fastapi import FastAPI, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
 import logging
 from contextlib import asynccontextmanager
 
+from fastapi import FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
 
-from src.config import (
-    API_TITLE,
-    API_VERSION,
-    API_DESCRIPTION,
-    MODEL_PATH,
-    THRESHOLD_PATH,
-    FEATURE_NAMES_PATH,
-    PREPROCESSOR_PATH,
-    LOG_LEVEL,
-)
-from src.predictor import CreditRiskPredictor
 from src.api.schemas import (
-    LoanApplication,
-    PredictionResponse,
     BatchPredictionRequest,
     BatchPredictionResponse,
     HealthCheck,
+    LoanApplication,
     ModelInfo,
+    PredictionResponse,
 )
+from src.config import (
+    API_DESCRIPTION,
+    API_TITLE,
+    API_VERSION,
+    FEATURE_NAMES_PATH,
+    LOG_LEVEL,
+    MODEL_PATH,
+    PREPROCESSOR_PATH,
+    THRESHOLD_PATH,
+)
+from src.predictor import CreditRiskPredictor
 
 # Configure logging
 logging.basicConfig(level=LOG_LEVEL)
@@ -74,8 +74,11 @@ def get_predictor() -> CreditRiskPredictor:
     if _predictor is None:
         try:
             _predictor = CreditRiskPredictor(
-                MODEL_PATH, THRESHOLD_PATH, FEATURE_NAMES_PATH, PREPROCESSOR_PATH,
-                use_mlflow=True  # Enable MLFlow loading with fallback to joblib
+                MODEL_PATH,
+                THRESHOLD_PATH,
+                FEATURE_NAMES_PATH,
+                PREPROCESSOR_PATH,
+                use_mlflow=True,  # Enable MLFlow loading with fallback to joblib
             )
             logger.info("Model loaded successfully")
         except Exception as e:
@@ -118,7 +121,7 @@ async def get_model_info():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Model not loaded: {str(e)}",
-        )
+        ) from e
 
 
 # ==================== PREDICTIONS ====================
@@ -151,11 +154,11 @@ async def predict(application: LoanApplication):
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Model not loaded",
-            )
+            ) from e
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing prediction: {str(e)}",
-        )
+        ) from e
 
 
 @app.post("/predict/batch", response_model=BatchPredictionResponse)
@@ -184,11 +187,11 @@ async def predict_batch(request: BatchPredictionRequest):
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Model not loaded",
-            )
+            ) from e
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing batch prediction: {str(e)}",
-        )
+        ) from e
 
 
 # ==================== ROOT ====================

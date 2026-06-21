@@ -1,12 +1,13 @@
-import joblib
-from pathlib import Path
-from typing import Dict, List
 import logging
+from pathlib import Path
+
+import joblib
 
 # MLFlow imports
 try:
     import mlflow
     import mlflow.pyfunc
+
     MLFLOW_AVAILABLE = True
 except ImportError:
     MLFLOW_AVAILABLE = False
@@ -43,7 +44,7 @@ class CreditRiskPredictor:
         self.feature_names = None
         self.preprocessor = None
         self.model_source = None
-        
+
         # Try MLFlow first if available and enabled
         if use_mlflow and MLFLOW_AVAILABLE:
             try:
@@ -53,9 +54,11 @@ class CreditRiskPredictor:
                 self.model_source = "MLFlow (CreditScorer/Staging)"
                 logger.info("Model loaded from MLFlow successfully")
             except Exception as e:
-                logger.warning(f"Could not load model from MLFlow: {e}. Falling back to joblib...")
+                logger.warning(
+                    f"Could not load model from MLFlow: {e}. Falling back to joblib..."
+                )
                 self.model = None
-        
+
         # Fallback to joblib if MLFlow loading failed or not enabled
         if self.model is None:
             try:
@@ -65,7 +68,7 @@ class CreditRiskPredictor:
             except Exception as e:
                 logger.error(f"Error loading model from joblib: {e}")
                 raise
-        
+
         # Load threshold, feature names, and preprocessor from joblib
         try:
             self.threshold = joblib.load(threshold_path)
@@ -77,7 +80,7 @@ class CreditRiskPredictor:
             logger.error(f"Error loading predictor components: {e}")
             raise
 
-    def predict(self, features: Dict[str, float]) -> Dict:
+    def predict(self, features: dict[str, float]) -> dict:
         """
         Performs a single prediction with raw data
 
@@ -93,12 +96,16 @@ class CreditRiskPredictor:
 
             # Get default probability from the model
             # Handle both sklearn models (with predict_proba) and MLFlow pyfunc models
-            if hasattr(self.model, 'predict_proba'):
+            if hasattr(self.model, "predict_proba"):
                 prob_default = self.model.predict_proba(X_processed)[0][1]
             else:
                 # MLFlow pyfunc model - use predict method
                 predictions = self.model.predict(X_processed)
-                prob_default = float(predictions[0][1]) if len(predictions[0]) > 1 else float(predictions[0])
+                prob_default = (
+                    float(predictions[0][1])
+                    if len(predictions[0]) > 1
+                    else float(predictions[0])
+                )
 
             # Apply threshold
             prediction = 1 if prob_default >= self.threshold else 0
@@ -120,7 +127,7 @@ class CreditRiskPredictor:
             logger.error(f"Error in prediction: {e}")
             raise
 
-    def batch_predict(self, features_list: List[Dict]) -> List[Dict]:
+    def batch_predict(self, features_list: list[dict]) -> list[dict]:
         """
         Performs batch predictions with raw data
 
@@ -141,16 +148,20 @@ class CreditRiskPredictor:
 
             # Get default probabilities from the model
             # Handle both sklearn models (with predict_proba) and MLFlow pyfunc models
-            if hasattr(self.model, 'predict_proba'):
+            if hasattr(self.model, "predict_proba"):
                 probs_default = self.model.predict_proba(X_processed)[:, 1]
             else:
                 # MLFlow pyfunc model - use predict method
                 predictions_raw = self.model.predict(X_processed)
-                probs_default = predictions_raw[:, 1] if predictions_raw.shape[1] > 1 else predictions_raw.flatten()
+                probs_default = (
+                    predictions_raw[:, 1]
+                    if predictions_raw.shape[1] > 1
+                    else predictions_raw.flatten()
+                )
 
             # Loop through probabilities and apply threshold to get predictions and risk levels
             predictions = []
-            for i, prob_default in enumerate(probs_default):
+            for prob_default in probs_default:
                 prediction = 1 if prob_default >= self.threshold else 0
                 risk_label = "high_risk" if prediction == 1 else "low_risk"
 
@@ -172,11 +183,11 @@ class CreditRiskPredictor:
             logger.error(f"Error in batch predictions: {e}")
             raise
 
-    def get_feature_names(self) -> List[str]:
+    def get_feature_names(self) -> list[str]:
         """Returns the list of expected feature names"""
         return list(self.feature_names)
 
-    def get_model_info(self) -> Dict:
+    def get_model_info(self) -> dict:
         """Returns information about the model"""
         return {
             "model_type": str(type(self.model).__name__),

@@ -1,22 +1,23 @@
 """Tests for configuration module"""
 
 from pathlib import Path
+
 from src.config import (
-    BASE_DIR,
-    MODELS_DIR,
-    DATA_DIR,
-    MODEL_PATH,
-    THRESHOLD_PATH,
-    FEATURE_NAMES_PATH,
-    PREPROCESSOR_PATH,
     API_TITLE,
     API_VERSION,
-    MIN_AGE,
+    BASE_DIR,
+    DATA_DIR,
+    FEATURE_NAMES_PATH,
     MAX_AGE,
-    MIN_EMP_LENGTH,
     MAX_EMP_LENGTH,
-    MIN_LOAN_AMOUNT,
     MAX_LOAN_AMOUNT,
+    MIN_AGE,
+    MIN_EMP_LENGTH,
+    MIN_LOAN_AMOUNT,
+    MODEL_PATH,
+    MODELS_DIR,
+    PREPROCESSOR_PATH,
+    THRESHOLD_PATH,
 )
 
 

@@ -1,17 +1,18 @@
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List
 from enum import Enum
+
+from pydantic import BaseModel, ConfigDict, Field
+
 from src.config import (
-    MIN_AGE,
     MAX_AGE,
-    MIN_EMP_LENGTH,
     MAX_EMP_LENGTH,
-    MIN_LOAN_AMOUNT,
     MAX_LOAN_AMOUNT,
+    MIN_AGE,
+    MIN_EMP_LENGTH,
+    MIN_LOAN_AMOUNT,
 )
 
 
-class HomeOwnershipEnum(str, Enum):
+class HomeOwnershipEnum(Enum):
     """Valid values for home ownership"""
 
     RENT = "RENT"
@@ -20,7 +21,7 @@ class HomeOwnershipEnum(str, Enum):
     OTHER = "OTHER"
 
 
-class LoanIntentEnum(str, Enum):
+class LoanIntentEnum(Enum):
     """Valid values for loan intent"""
 
     PERSONAL = "PERSONAL"
@@ -31,7 +32,7 @@ class LoanIntentEnum(str, Enum):
     DEBTCONSOLIDATION = "DEBTCONSOLIDATION"
 
 
-class LoanGradeEnum(str, Enum):
+class LoanGradeEnum(Enum):
     """Valid values for loan grade"""
 
     A = "A"
@@ -110,7 +111,7 @@ class PredictionResponse(BaseModel):
 class BatchPredictionRequest(BaseModel):
     """Schema for batch predictions"""
 
-    applications: List[LoanApplication] = Field(..., max_length=100)
+    applications: list[LoanApplication] = Field(..., max_length=100)
 
 
 class BatchPredictionResponse(BaseModel):
@@ -118,7 +119,7 @@ class BatchPredictionResponse(BaseModel):
 
     success: bool
     num_predictions: int
-    predictions: List[PredictionResponse]
+    predictions: list[PredictionResponse]
 
 
 class HealthCheck(BaseModel):
@@ -135,4 +136,4 @@ class ModelInfo(BaseModel):
     model_type: str
     threshold: float
     num_features: int
-    features: List[str]
+    features: list[str]

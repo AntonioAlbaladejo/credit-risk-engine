@@ -1,10 +1,11 @@
 """Tests for data preprocessing module"""
 
-import pytest
-import pandas as pd
 import numpy as np
+import pandas as pd
+import pytest
+
+from src.config import FEATURE_NAMES_PATH, PREPROCESSOR_PATH
 from src.preprocessing import DataPreprocessor
-from src.config import PREPROCESSOR_PATH, FEATURE_NAMES_PATH
 
 
 class TestDataPreprocessorInitialization:
