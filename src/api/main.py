@@ -74,7 +74,8 @@ def get_predictor() -> CreditRiskPredictor:
     if _predictor is None:
         try:
             _predictor = CreditRiskPredictor(
-                MODEL_PATH, THRESHOLD_PATH, FEATURE_NAMES_PATH, PREPROCESSOR_PATH
+                MODEL_PATH, THRESHOLD_PATH, FEATURE_NAMES_PATH, PREPROCESSOR_PATH,
+                use_mlflow=True  # Enable MLFlow loading with fallback to joblib
             )
             logger.info("Model loaded successfully")
         except Exception as e:

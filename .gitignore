@@ -236,3 +236,19 @@ reports/*.html
 reports/*.pdf
 
 */settings.json
+
+# MLFLOW
+
+# MLflow tracking and logging
+mlruns/
+mlruns.db*
+mlflow.db*
+
+# MLflow artifacts and models
+mlartifacts/
+
+# MLflow recipes / pipelines
+.mlflow/
+
+# If you use local virtual environments for MLflow projects
+.mlflow_env/
