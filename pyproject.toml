@@ -69,6 +69,8 @@ dev = [
     "ipykernel>=7.3.0",
     "ruff",
     "pre-commit",
+    "pytest-cov>=7.1.0",
+    "pytest-timeout>=2.4.0",
 ]
 
 [tool.uv.sources]
