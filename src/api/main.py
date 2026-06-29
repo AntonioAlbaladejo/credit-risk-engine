@@ -1,5 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
+from enum import Enum
 
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,8 +23,6 @@ from src.config import (
     PREPROCESSOR_PATH,
     THRESHOLD_PATH,
 )
-from enum import Enum
-
 from src.predictor import CreditRiskPredictor
 
 # Configure logging
