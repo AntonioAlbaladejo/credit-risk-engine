@@ -19,16 +19,16 @@ jobs:
     if: github.event_name == 'push' || github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      
+
       - name: Extract version from pyproject.toml
         id: version
         run: |
           VERSION=$(grep '^version' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-      
+
       - name: Build Docker image
         uses: docker/build-push-action@v5
         with:
@@ -40,9 +40,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           outputs: type=docker,dest=/tmp/image.tar
-      
+
       - name: Upload Docker image
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: docker-image
           path: /tmp/image.tar
@@ -54,17 +54,17 @@ jobs:
     needs: build
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Download Docker image
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: docker-image
           path: /tmp
-      
+
       - name: Load image
         run: |
           docker load --input /tmp/image.tar
-      
+
       - name: Test image
         run: |
           docker run --rm credit-risk-engine:latest python -c "import src; print('Import successful')"
@@ -78,7 +78,7 @@ jobs:
   #     - uses: actions/checkout@v4
   #     
   #     - name: Download Docker image
-  #       uses: actions/download-artifact@v3
+  #       uses: actions/download-artifact@v4
   #       with:
   #         name: docker-image
   #         path: /tmp
@@ -91,3 +91,4 @@ jobs:
   #       run: |
   #         # Configure your registry credentials and push commands here
   #         echo "Push to your registry"
+ 
