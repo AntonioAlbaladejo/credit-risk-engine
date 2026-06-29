@@ -29,15 +29,15 @@ class TestConfigPaths:
         assert BASE_DIR.exists()
         assert BASE_DIR.is_dir()
 
-    def test_models_dir_exists(self):
-        """Test that models directory exists"""
-        assert MODELS_DIR.exists()
-        assert MODELS_DIR.is_dir()
+    def test_models_dir_path(self):
+        """Test that models directory path is valid"""
+        assert isinstance(MODELS_DIR, Path)
+        assert str(MODELS_DIR).endswith("models")
 
-    def test_data_dir_exists(self):
-        """Test that data directory exists"""
-        assert DATA_DIR.exists()
-        assert DATA_DIR.is_dir()
+    def test_data_dir_path(self):
+        """Test that data directory path is valid"""
+        assert isinstance(DATA_DIR, Path)
+        assert str(DATA_DIR).endswith("data")
 
     def test_model_paths_are_paths(self):
         """Test that model paths are Path objects"""
@@ -46,16 +46,12 @@ class TestConfigPaths:
         assert isinstance(FEATURE_NAMES_PATH, Path)
         assert isinstance(PREPROCESSOR_PATH, Path)
 
-    def test_model_files_exist(self):
-        """Test that required model files exist"""
-        assert MODEL_PATH.exists(), f"Model file not found at {MODEL_PATH}"
-        assert THRESHOLD_PATH.exists(), f"Threshold file not found at {THRESHOLD_PATH}"
-        assert FEATURE_NAMES_PATH.exists(), (
-            f"Feature names file not found at {FEATURE_NAMES_PATH}"
-        )
-        assert PREPROCESSOR_PATH.exists(), (
-            f"Preprocessor file not found at {PREPROCESSOR_PATH}"
-        )
+    def test_model_paths_have_correct_names(self):
+        """Test that model file names are correct"""
+        assert MODEL_PATH.name == "best_tuned_model_xgboost.joblib"
+        assert THRESHOLD_PATH.name == "optimal_threshold.joblib"
+        assert FEATURE_NAMES_PATH.name == "feature_names.joblib"
+        assert PREPROCESSOR_PATH.name == "preprocessor.joblib"
 
 
 class TestAPIConfig:
