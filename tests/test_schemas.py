@@ -63,7 +63,7 @@ class TestLoanApplicationSchema:
         app = LoanApplication(**valid_application)
         assert app.person_age == 35
         assert app.person_income == 50000
-        assert app.person_home_ownership == "OWN"
+        assert app.person_home_ownership == HomeOwnershipEnum.OWN
 
     def test_age_too_young(self, valid_application):
         """Test age below minimum"""

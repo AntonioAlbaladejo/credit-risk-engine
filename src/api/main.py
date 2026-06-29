@@ -22,11 +22,18 @@ from src.config import (
     PREPROCESSOR_PATH,
     THRESHOLD_PATH,
 )
+from enum import Enum
+
 from src.predictor import CreditRiskPredictor
 
 # Configure logging
 logging.basicConfig(level=LOG_LEVEL)
 logger = logging.getLogger(__name__)
+
+
+def _dump_model(model) -> dict:
+    data = model.model_dump() if hasattr(model, "model_dump") else model.dict()
+    return {k: v.value if isinstance(v, Enum) else v for k, v in data.items()}
 
 
 @asynccontextmanager
@@ -140,11 +147,7 @@ async def predict(application: LoanApplication):
     try:
         predictor = get_predictor()
         # Handle both Pydantic v1 and v2 - use model_dump() for v2, dict() for v1
-        features = (
-            application.model_dump()
-            if hasattr(application, "model_dump")
-            else application.dict()
-        )
+        features = _dump_model(application)
         prediction = predictor.predict(features)
         return PredictionResponse(**prediction)
 
@@ -169,10 +172,7 @@ async def predict_batch(request: BatchPredictionRequest):
     try:
         predictor = get_predictor()
         # Handle both Pydantic v1 and v2 - use model_dump() for v2, dict() for v1
-        features_list = [
-            app.model_dump() if hasattr(app, "model_dump") else app.dict()
-            for app in request.applications
-        ]
+        features_list = [_dump_model(app) for app in request.applications]
         predictions = predictor.batch_predict(features_list)
 
         return BatchPredictionResponse(
