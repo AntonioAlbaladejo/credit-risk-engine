@@ -1,37 +1,53 @@
 #########################################################
-FROM python:3.11.10-slim as builder
+FROM python:3.11.10-slim AS builder
 
 WORKDIR /build
 
-# Install uv
+# Install uv CLI for managing virtual environments and dependency sync
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Copy dependency files
+# Copy dependency manifests before installing packages so the layer can be cached
 COPY pyproject.toml uv.lock ./
 
-# Create virtual environment and install dependencies
+# Install compile-time dependencies and clear apt lists
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create the virtual environment and install runtime dependencies only
 RUN uv sync --frozen --no-dev
 
-#########################################################
-FROM python:3.11.10-slim as runtime
+# Strip unnecessary Python bytecode and library symbols to reduce image size
+RUN find /build/.venv -type d -name "__pycache__" -exec rm -rf {} + \
+    && find /build/.venv -type f -name "*.pyc" -delete \
+    && find /build/.venv -type f -name "*.pyo" -delete \
+    && find /build/.venv -type f -name "*.so" -exec strip --strip-unneeded {} \; 2>/dev/null || true
 
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PORT=8000
+# --- Runtime Stage: Use the same libc-compatible base image as the builder stage ---
+FROM python:3.11.10-slim AS runtime
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PORT=8000 \
+    PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+# Install minimal runtime packages, including curl for health checks and passwd for useradd/groupadd
+RUN apt-get update && apt-get install -y --no-install-recommends curl passwd \
+    && rm -rf /var/lib/apt/lists/*
 
+# Create a non-root user and group for running the app
 RUN groupadd -r appgroup && useradd -r -g appgroup appuser
 
+# Copy the prepared virtual environment from the builder stage
 COPY --from=builder /build/.venv /app/.venv
 
-ENV PATH="/app/.venv/bin:$PATH"
+# Copy only application source and model artifacts needed at runtime
+COPY src ./src
+COPY models ./models
 
+# Set ownership of application files before switching to non-root user
 RUN chown -R appuser:appgroup /app
-
-COPY . .
 
 USER appuser
 

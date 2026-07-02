@@ -1,82 +1,74 @@
 # Credit Risk Engine
 
-A production-ready machine learning system to predict credit risk and loan default probability. Built with advanced techniques for handling imbalanced data and optimized for business decision-making.
+A production-ready machine learning system for credit scoring and loan default probability prediction. The repository includes a FastAPI inference service, serialized model artifacts, a reproducible dependency workflow, Docker deployment, and CI/CD automation.
 
 ---
 
-## ⚡ Quick Summary (For Recruiters)
+## ⚡ Executive Summary
 
-### 🏆 Final Results
-- **Selected Model**: XGBoost (Gradient Boosting)
-- **ROC-AUC**: 0.9432 (5-fold CV) - Excellent discrimination ability
-- **Test Set Performance**:
-  - Accuracy: 92.35%
-  - Recall: 79.93% (misses only ~20% of defaults)
-  - Precision: 83.79% (avoids discarding credit-worthy clients)
-  - F1-Score: 0.818 (excellent balance between Precission and Recall)
+### 🏆 Final outcome
+- **Production model**: XGBoost classifier
+- **Primary evaluation goal**: recall and ROC-AUC for reliable default detection
+- **Model threshold**: optimized to 0.55 for balanced decision-making
+- **API service**: FastAPI with validated inference and batch scoring
 
-### 💻 Tech Stack
-| Category | Technologies |
-|----------|---------------|
-| **Languages** | Python 3.8+ |
-| **Data Processing** | Pandas, NumPy |
-| **ML & Modeling** | Scikit-learn, XGBoost |
-| **Evaluation** | Cross-validation, Grid Search, ROC-AUC |
-| **Visualization** | Matplotlib, Seaborn |
-| **Model Serialization** | Joblib |
-| **Development** | Jupyter Notebooks |
+### 💡 What makes this project strong
+- Reproducible dependency management with `uv`, `pyproject.toml`, and `uv.lock`
+- FastAPI inference service with typed request/response schemas
+- Docker multi-stage build with runtime-only artifacts
+- GitHub Actions workflows for linting, testing, and image validation
+- Model inference path designed for production readiness
 
-### 🎯 Key Decisions
-1. **Model Selection**: XGBoost chosen over Logistic Regression, Random Forest, and SVM due to:
-   - Highest ROC-AUC (0.945)
-   - Best stability across validation folds
-   - Superior handling of imbalanced classes with `scale_pos_weight`
-   - Well-calibrated probability estimates
+### 🧰 Tech stack
+- Python 3.10+
+- FastAPI, Uvicorn
+- XGBoost, scikit-learn, pandas, numpy
+- joblib
+- GitHub Actions
+- Docker
 
-2. **Optimization Metric**: 
-   - **Recall** (minimize missed defaults - costly in credit risk)
+---
 
-3. **Threshold Selection**: 
-   - **Optimal threshold: 0.55** (from grid search 0.1-0.9)
-   - Balances precision (86%) and recall (79%) per business requirements
+## 📦 Repository layout
 
-4. **Imbalance Handling**:
-   - `scale_pos_weight` in XGBoost
-   - Stratified train-test split (80-20)
-   - 5-fold stratified cross-validation
-
-### 📊 Quick Usage
-```python
-import joblib
-
-model = joblib.load('models/best_tuned_model_xgboost.joblib')
-threshold = joblib.load('models/optimal_threshold.joblib')
-
-# Get prediction for new applicant
-probability = model.predict_proba(X_new)[:, 1]
-is_default_risk = probability >= threshold  # 0.55
+```
+credit-risk-engine/
+├── README.md
+├── LICENSE
+├── Dockerfile
+├── pyproject.toml
+├── uv.lock
+├── .dockerignore
+├── .github/workflows/
+│   ├── ci.yml
+│   └── cd.yml
+├── data/
+├── models/
+├── results/
+├── notebooks/
+├── src/
+│   ├── api/
+│   │   ├── main.py
+│   │   └── schemas.py
+│   ├── config.py
+│   ├── predictor.py
+│   ├── preprocessing.py
+│   ├── model_monitoring.py
+│   └── __init__.py
+└── tests/
+    ├── test_api.py
+    ├── test_config.py
+    ├── test_preprocessing.py
+    └── test_schemas.py
 ```
 
----
-
-## 📋 Detailed Project Information
-
-## 🎯 Project Overview
-
-The **Credit Risk Engine** is a credit scoring system that predicts the probability of loan default using financial and operational indicators. This system employs multiple machine learning algorithms, rigorous cross-validation, and threshold optimization to balance precision and recall for optimal decision-making in credit risk management.
-
-### Key Characteristics
-- **Objective**: Predict probability of default (PD) on loan applications
-- **Approach**: Supervised classification with imbalanced binary classification handling
-- **Models Evaluated**: 4 baseline models + hyperparameter tuning
-- **Validation Strategy**: Stratified train-test split + 5-fold cross-validation
-- **Threshold Optimization**: Data-driven threshold selection for business alignment
+> The runtime Docker image includes only `src/` and `models/`; notebooks, raw data, and intermediate results are excluded from production packaging.
 
 ---
 
-## 📊 Detailed Model Performance
+## 📈 Results summary
 
-### Baseline Models Comparison (Test Set)
+### Baseline test metrics
 
 | Model | Accuracy | Precision | Recall | F1-Score | ROC-AUC |
 |-------|----------|-----------|--------|----------|---------|
@@ -85,10 +77,10 @@ The **Credit Risk Engine** is a credit scoring system that predicts the probabil
 | **XGBoost** | **92.35%** | **83.79%** | **79.93%** | **0.818** | **0.945** |
 | SVM | 88.27% | 71.21% | 76.48% | 0.738 | 0.909 |
 
-### Cross-Validation Results (5-Fold Stratified)
+### 5-fold cross-validation
 
 | Model | Accuracy | Precision | Recall | F1 | ROC-AUC |
-|-------|----------|-----------|--------|----| ---------|
+|-------|----------|-----------|--------|----|---------|
 | Logistic Regression | 0.8062 (±0.0035) | 0.5348 (±0.0061) | 0.7733 (±0.0077) | 0.6323 (±0.0050) | 0.8659 (±0.0034) |
 | Random Forest | 0.9340 (±0.0020) | 0.9698 (±0.0038) | 0.7160 (±0.0083) | 0.8238 (±0.0060) | 0.9284 (±0.0042) |
 | **XGBoost** | **0.9191 (±0.0035)** | **0.8241 (±0.0095)** | **0.7938 (±0.0085)** | **0.8087 (±0.0083)** | **0.9432 (±0.0035)** |
@@ -96,202 +88,157 @@ The **Credit Risk Engine** is a credit scoring system that predicts the probabil
 
 ---
 
-## 📁 Repository Structure
+## 📡 API reference
 
-```
-credit-risk-engine/
-├── README.md                          # Project documentation
-├── LICENSE                            # Project license
-├── requirements.txt                   # Python dependencies
-│
-├── notebooks/                         # Jupyter notebooks for analysis
-│   ├── data_ingestion.ipynb          # Data loading and initial exploration
-│   ├── exploratory_data_analysis.ipynb # Statistical analysis and visualization
-│   ├── feature_engineering.ipynb      # Feature creation and preprocessing
-│   └── model_selection.ipynb          # Model training, evaluation, and selection
-│
-├── data/                              # Datasets (raw and processed)
-│   ├── credit_risk_dataset.csv        # Original raw dataset
-│   ├── credit_risk_cleaned.csv        # Cleaned dataset (missing values, outliers)
-│   ├── credit_risk_fe.csv             # Feature-engineered dataset
-│   └── credit_risk_unskewed.csv       # Balanced dataset variant
-│
-├── models/                            # Trained models and artifacts
-│   ├── best_model_xgboost.joblib     # Production XGBoost model
-│   ├── best_tuned_model_xgboost.joblib # Tuned XGBoost (after GridSearchCV)
-│   ├── preprocessor.joblib            # Scikit-learn pipeline for preprocessing
-│   ├── feature_names.joblib           # Feature list for inference
-│   └── optimal_threshold.joblib       # Optimal decision threshold
-│
-├── results/                           # Model evaluation results
-│   ├── model_comparison.csv           # Performance metrics comparison
-│   ├── cross_validation_results.csv   # 5-fold CV metrics by model
-│   ├── threshold_optimization.csv     # Threshold sensitivity analysis
-│   └── tuned_models_comparison.csv    # Hyperparameter tuned models results
-│
-├── src/                               # Source code (production modules)
-│   └── (To be populated with API and deployment code)
-│
-└── tests/                             # Unit tests
-    └── (To be populated with test suite)
-```
+The production API is defined in `src/api/main.py` and provides the following endpoints:
+
+- `GET /health` — returns service health and whether the model is loaded successfully
+- `GET /model/info` — returns model metadata and supported feature names
+- `POST /predict` — returns a single loan application prediction
+- `POST /predict/batch` — returns batch predictions for up to 100 applications
+- `GET /` — root endpoint with API summary
+
+### Input schema
+The API accepts loan application data validated by `src/api/schemas.py`.
+
+Required fields:
+- `person_age`
+- `person_income`
+- `person_emp_length`
+- `person_home_ownership`
+- `loan_intent`
+- `loan_grade`
+- `loan_amnt`
+- `loan_int_rate`
+- `loan_percent_income`
+- `cb_person_default_on_file`
+- `cb_person_cred_hist_length`
+
+### Response fields
+- `prediction`: binary default risk label (`1` = default, `0` = no default)
+- `probability_default`
+- `probability_non_default`
+- `risk_level`
+- `threshold_used`
+- `recommendation`
 
 ---
 
-## 🔄 Machine Learning Pipeline
+## 🧠 Architecture
 
-### 1️⃣ **Data Ingestion** (`data_ingestion.ipynb`)
-- Loaded raw credit risk dataset from Kaggle
-- Initial data exploration (shape, types, missing values)
-- Basic statistical summaries
+### `src/predictor.py`
+- Loads model artifacts from `models/`
+- Attempts MLflow model loading first, then falls back to joblib
+- Applies an optimized threshold to probability outputs
+- Produces structured prediction metadata for API responses
 
-### 2️⃣ **Exploratory Data Analysis** (`exploratory_data_analysis.ipynb`)
-- Distribution analysis of features and target variable
-- Correlation analysis and multicollinearity detection
-- Class imbalance assessment
-- Visualization of key relationships
-- Outlier detection and analysis
+### `src/preprocessing.py`
+- Validates raw API inputs
+- Transforms numeric and categorical fields into model-ready features
+- Supports single and batch preprocessing flows
 
-### 3️⃣ **Feature Engineering** (`feature_engineering.ipynb`)
-- Missing value handling (imputation strategies)
-- Categorical encoding (one-hot, label encoding)
-- Numerical feature scaling (StandardScaler)
-- Feature creation from domain knowledge
-- Dataset balancing techniques
-- Dimensionality reduction excluding irrelevant features
-- Output: `credit_risk_fe.csv` with 50+ engineered features
+### `src/config.py`
+- Central configuration for artifact paths
+- API metadata and validation limits
 
-### 4️⃣ **Model Selection & Evaluation** (`model_selection.ipynb`)
-
-#### Data Preparation
-- Train-test split: 80-20 with stratification
-- Class balance preservation in splits
-
-#### Models Evaluated
-1. **Logistic Regression** - Baseline linear model with balanced class weights
-2. **Random Forest** - Ensemble method with balanced class weights
-3. **XGBoost** - Gradient boosting with scale_pos_weight for imbalance
-4. **SVM (RBF)** - Support Vector Machines with probability estimates
-
-#### Evaluation Methodology
-- **Primary Metric**: Recall (reduce number of false negatives)
-- **Secondary Metrics**: ROC-AUC (handles imbalance well), Precision an F1-Score
-- **Validation**: 5-fold Stratified Cross-Validation
-- **Threshold Optimization**: Grid search from 0.1 to 0.9
-
-#### Hyperparameter Tuning
-- GridSearchCV applied to XGBoost
-- Parameters tuned: max_depth, learning_rate, n_estimators, subsample
-- Results saved in `tuned_models_comparison.csv`
+### `src/model_monitoring.py`
+- Contains drift monitoring and evaluation support for production monitoring workflows
 
 ---
 
-## � Model Insights & Analysis
+## 🧪 Testing
 
-### Strengths
- - **High ROC-AUC (0.945)** - Excellent discrimination between default/non-default  
- - **Strong Recall (79.93%)** - Captures ~80% of actual defaults (critical for credit risk)  
- - **Good Precision (83.79%)** - Minimizes false positives, reduces unnecessary rejections  
- - **Stable Performance** - Consistent across 5-fold cross-validation folds  
- - **Well-calibrated Probabilities** - Suitable for business-driven threshold optimization  
-
-### Technical Considerations
- - **Imbalanced Classes** - Handled with `scale_pos_weight` and stratified sampling  
- - **Feature Importance** - XGBoost provides native feature importance for interpretability  
- - **Threshold Dependency** - Final performance depends on selected decision threshold (0.55 optimal)  
-
-### Model Trade-offs
- - **vs Logistic Regression**: XGBoost captures non-linear patterns better (+19.5% ROC-AUC)
- - **vs Random Forest**: XGBoost has better recall (+7.3%) while maintaining similar precision
- - **vs SVM**: XGBoost more stable and faster to train while maintaining better discriminative power
-
----
-
-## 🚀 Getting Started
-
-### Prerequisites
-- Python 3.10+ ([Install uv](https://docs.astral.sh/uv/getting-started/installation/))
-- uv (modern Python package manager, [installation guide](https://docs.astral.sh/uv/getting-started/installation/))
-
-### Installation
-
+### Run tests
 ```bash
-# Clone the repository
+uv run pytest tests/ -v
+```
+
+### Coverage goals
+- API endpoints
+- schema validation
+- preprocessing pipeline
+- model artifact loading and inference
+
+---
+
+## 🐳 Docker
+
+The repository includes a production Docker image built with a multi-stage `Dockerfile`.
+
+### Build and run
+```bash
+docker build -t credit-risk-engine:latest .
+docker run --rm -p 8000:8000 credit-risk-engine:latest
+```
+
+### Deployment details
+- Base image: `python:3.11.10-slim`
+- Uses `uv` in the builder stage to install pinned dependencies
+- Copies only runtime artifacts into the final image
+- Runs the app as a non-root user
+- Defines a healthcheck against `/health`
+
+---
+
+## ⚙️ CI/CD
+
+### GitHub Actions
+This repository includes two workflows:
+
+- `.github/workflows/ci.yml`
+  - runs on `push` and `pull_request` to `main` and `develop`
+  - installs `uv` and Python 3.11
+  - installs dependencies with `uv sync --frozen`
+  - runs `ruff check .` and `ruff format --check .`
+  - runs `pytest tests/ -v --cov=src --cov-report=xml`
+  - uploads coverage reports to Codecov
+
+- `.github/workflows/cd.yml`
+  - triggers on successful `main` builds
+  - builds the Docker image
+  - validates the image by loading it and running a smoke import
+  - includes a commented registry push step for future deployment
+
+---
+
+## ⚙️ Local setup
+
+### Preferred workflow
+```bash
 git clone https://github.com/yourusername/credit-risk-engine.git
 cd credit-risk-engine
-
-# Install dependencies using uv (creates .venv automatically)
 uv sync
-
-# Activate the virtual environment
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Launch Jupyter for notebook exploration (optional)
-jupyter notebook
+source .venv/bin/activate
 ```
 
-#### Alternative: Installing with pip (legacy)
-If you prefer traditional pip + venv setup:
+### Legacy fallback
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt.bak
 ```
 
-#### Running the API
+### Run the API locally
 ```bash
-# Start the FastAPI server
-uvicorn src.api.main:app --host 0.0.0.0 --port 8000
-
-# Or use uv to run it
 uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000
 ```
 
-#### Running Tests
-```bash
-# Run all tests
-uv run pytest
-
-# Run with verbose output
-uv run pytest -v
-
-# Run specific test file
-uv run pytest tests/test_api.py -v
-```
-
-#### Development Dependencies
-Dev dependencies (pytest, etc.) are available in the `dev` group. To install them:
-```bash
-uv sync --all-groups
-```
 ---
 
-## 📚 Detailed Implementation
+## 📌 Reviewer notes
 
----
-
-## 📄 File Reference Guide
-
-| File | Purpose |
-|------|---------|
-| `best_tuned_model_xgboost.joblib` | Production-ready XGBoost model |
-| `optimal_threshold.joblib` | Decision threshold (0.55) for binary classification |
-| `preprocessor.joblib` | Scikit-learn pipeline with feature scaling and encoding |
-| `feature_names.joblib` | Feature list for ensuring consistency |
-| `model_comparison.csv` | Performance comparison of 4 baseline models |
-| `cross_validation_results.csv` | 5-fold CV metrics with standard deviations |
-| `threshold_optimization.csv` | Sensitivity analysis across decision thresholds |
-
----
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+- `uv` is the primary package manager and dependency source for reproducibility
+- `requirements.txt.bak` remains available for compatibility with legacy pip workflows
+- The Docker image excludes notebooks, raw data, and results for production efficiency
+- The FastAPI app currently allows broad CORS for ease of integration; production should narrow origins
+- The CD workflow is ready for registry push once credentials are configured
 
 ---
 
 ## 👤 Author
+**Antonio Albaladejo Soriano**
 
-**Antonio Albaladejo Soriano**  
-[LinkedIn Profile](https://www.linkedin.com/in/antonio-albaladejo-soriano-3133211b7/)
+[LinkedIn](https://www.linkedin.com/in/antonio-albaladejo-soriano-3133211b7/)
 
 ---
 
