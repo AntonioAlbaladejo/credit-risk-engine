@@ -39,7 +39,7 @@ dependencies = [
     "idna==3.11",
     "iniconfig==2.3.0",
     "joblib==1.5.3",
-    "numpy==2.2.6",
+    "numpy>=1.26,<2.1",
     "nvidia-nccl-cu12==2.29.7",
     "packaging",
     "pandas==2.3.3",
@@ -60,6 +60,7 @@ dependencies = [
     "xgboost==3.2.0",
     "mlflow>=3.14.0",
     "seaborn>=0.13.2",
+    "evidently==0.5.0",
 ]
 
 [dependency-groups]
