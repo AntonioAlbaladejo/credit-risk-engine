@@ -38,7 +38,9 @@ def _load_artifacts() -> tuple[Any, Any, list[str], Any]:
     return model, preprocessor, feature_names, threshold
 
 
-def _resolve_target_column(reference_data: pd.DataFrame, current_data: pd.DataFrame, target: str) -> str:
+def _resolve_target_column(
+    reference_data: pd.DataFrame, current_data: pd.DataFrame, target: str
+) -> str:
     candidate_names = [target]
     if target != "default":
         candidate_names.append("default")
@@ -50,7 +52,9 @@ def _resolve_target_column(reference_data: pd.DataFrame, current_data: pd.DataFr
             return candidate
 
     for column in reference_data.columns:
-        if column in current_data.columns and pd.api.types.is_integer_dtype(reference_data[column]):
+        if column in current_data.columns and pd.api.types.is_integer_dtype(
+            reference_data[column]
+        ):
             return column
 
     raise ValueError(
@@ -70,7 +74,9 @@ def _build_simple_html_report(
     current_copy = current_data.copy()
 
     if resolved_target not in reference_copy.columns:
-        raise ValueError(f"Target column '{resolved_target}' not found in reference data")
+        raise ValueError(
+            f"Target column '{resolved_target}' not found in reference data"
+        )
     if resolved_target not in current_copy.columns:
         raise ValueError(f"Target column '{resolved_target}' not found in current data")
 
