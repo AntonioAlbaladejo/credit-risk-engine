@@ -226,6 +226,8 @@ results/*.csv
 
 # Variables de entorno (Credenciales de APIs o BDs)
 .env
+.env.local
+.env.*.local
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
