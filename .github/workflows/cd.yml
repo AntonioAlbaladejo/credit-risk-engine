@@ -11,7 +11,7 @@ on:
 env:
   AWS_REGION: eu-west-1
   ECR_REPOSITORY: credit-risk-api
-  ECS_SERVICE: credit-risk-service
+  ECS_SERVICE: credit-risk-task-service-d1oa9itj
   ECS_CLUSTER: credit-risk-cluster
   ECS_TASK_DEFINITION: credit-risk-task
   CONTAINER_NAME: credit-risk-api
