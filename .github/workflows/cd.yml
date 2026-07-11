@@ -13,6 +13,7 @@ env:
   ECR_REPOSITORY: credit-risk-api
   ECS_SERVICE: credit-risk-service
   ECS_CLUSTER: credit-risk-cluster
+  ECS_TASK_DEFINITION: credit-risk-task
   CONTAINER_NAME: credit-risk-api
   CONTAINER_PORT: 8000
 
@@ -83,7 +84,7 @@ jobs:
 
       - name: Download Active Task Definition from AWS
         run: |
-          aws ecs describe-task-definition --task-definition ${{ env.ECS_SERVICE }} --query taskDefinition > task-definition.json
+          aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION }} --query taskDefinition > task-definition.json
 
       - name: Update Image in Task Definition
         id: task-def
