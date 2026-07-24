@@ -221,6 +221,12 @@ models/*.joblib
 models/*.onnx
 models/*.h5
 
+# Excepción con los cuatro artefactos que sirve la API si se versionan
+!models/best_tuned_model_xgboost.joblib
+!models/preprocessor.joblib
+!models/feature_names.joblib
+!models/optimal_threshold.joblib
+
 # Resultados
 results/*.csv
 

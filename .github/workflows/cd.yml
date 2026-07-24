@@ -49,7 +49,41 @@ jobs:
 
       - name: Verify Image Functionality
         run: |
-          docker run --rm credit-risk-engine:latest python -c "import src; print('Import successful')"
+          # Exercise the real endpoints. A plain "import src" passes even when
+          # the model artifacts are missing from the image, which is exactly the
+          # failure mode this step exists to catch.
+          docker run -d --name verify -p 8000:8000 credit-risk-engine:latest
+
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health > /dev/null 2>&1; then
+              echo "Health check passed after ${i}s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "::error::Container did not become healthy within 30s"
+              docker logs verify
+              docker rm -f verify
+              exit 1
+            fi
+            sleep 1
+          done
+
+          # /health returns 503 unless the model is actually loaded, so -f is
+          # enough to assert the container can serve predictions.
+          curl -fsS http://localhost:8000/health | tee /dev/stderr | grep -q '"model_loaded":true'
+
+          # loan_int_rate is sent as a fraction because the shipped schema still
+          # bounds it to [0, 1]. Update this payload together with that bound.
+          BODY=$(curl -fsS -X POST http://localhost:8000/predict \
+            -H 'Content-Type: application/json' \
+            -d '{"person_age":35,"person_income":50000,"person_home_ownership":"OWN",
+                 "person_emp_length":10,"loan_intent":"PERSONAL","loan_grade":"A",
+                 "loan_amnt":5000,"loan_int_rate":0.08,"loan_percent_income":0.1,
+                 "cb_person_default_on_file":0,"cb_person_cred_hist_length":8}')
+          echo "$BODY"
+          echo "$BODY" | grep -q '"probability_default"'
+
+          docker rm -f verify
 
   deploy-to-aws:
     name: Push to ECR & Deploy to Fargate
