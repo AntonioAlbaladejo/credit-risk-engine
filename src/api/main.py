@@ -2,7 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 from enum import Enum
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.schemas import (
@@ -97,8 +97,12 @@ def get_predictor() -> CreditRiskPredictor:
 
 
 @app.get("/health", response_model=HealthCheck)
-async def health_check():
-    """Verifies the status of the API and the model"""
+async def health_check(response: Response):
+    """Verifies the status of the API and the model.
+
+    Returns 503 when the model is unavailable so that container and load
+    balancer health checks fail on an instance that cannot serve predictions.
+    """
     try:
         # Try to ensure model is loaded
         predictor = get_predictor()
@@ -106,6 +110,9 @@ async def health_check():
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         model_available = False
+
+    if not model_available:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
     return HealthCheck(
         status="healthy" if model_available else "unhealthy",

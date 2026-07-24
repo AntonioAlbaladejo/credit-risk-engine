@@ -3,6 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from src.api import main
 from src.api.main import app
 
 
@@ -47,6 +48,24 @@ class TestHealthCheck:
         response = client.get("/health")
         data = response.json()
         assert data["model_loaded"] is True
+
+    def test_health_check_returns_503_when_model_unavailable(self, client, monkeypatch):
+        """An instance that cannot serve predictions must fail its health check.
+
+        Returning 200 here would let a load balancer route traffic to a broken
+        container, which is how a fully broken deploy can look green.
+        """
+
+        def broken_predictor():
+            raise RuntimeError("Model not loaded")
+
+        monkeypatch.setattr(main, "get_predictor", broken_predictor)
+
+        response = client.get("/health")
+        assert response.status_code == 503
+        data = response.json()
+        assert data["status"] == "unhealthy"
+        assert data["model_loaded"] is False
 
 
 class TestRootEndpoint:
