@@ -12,6 +12,8 @@ try:
 except ImportError:
     MLFLOW_AVAILABLE = False
 
+from src.config import MLFLOW_MODEL_URI, MLFLOW_TRACKING_URI
+
 # Data preprocessor to handle raw input transformation
 from src.preprocessing import DataPreprocessor
 
@@ -45,19 +47,22 @@ class CreditRiskPredictor:
         self.preprocessor = None
         self.model_source = None
 
-        # Try MLFlow first if available and enabled
-        if use_mlflow and MLFLOW_AVAILABLE:
+        # Try MLFlow first, but only when a tracking server is actually
+        # configured. Probing an unreachable one costs minutes of retry backoff.
+        if use_mlflow and MLFLOW_AVAILABLE and MLFLOW_TRACKING_URI:
             try:
-                mlflow.set_tracking_uri("http://localhost:5000")
+                mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
                 # Try to load the registered model from MLFlow
-                self.model = mlflow.pyfunc.load_model("models:/CreditScorer/Staging")
-                self.model_source = "MLFlow (CreditScorer/Staging)"
+                self.model = mlflow.pyfunc.load_model(MLFLOW_MODEL_URI)
+                self.model_source = f"MLFlow ({MLFLOW_MODEL_URI})"
                 logger.info("Model loaded from MLFlow successfully")
             except Exception as e:
                 logger.warning(
                     f"Could not load model from MLFlow: {e}. Falling back to joblib..."
                 )
                 self.model = None
+        elif use_mlflow and MLFLOW_AVAILABLE:
+            logger.info("MLFLOW_TRACKING_URI not set, loading model from joblib")
 
         # Fallback to joblib if MLFlow loading failed or not enabled
         if self.model is None:

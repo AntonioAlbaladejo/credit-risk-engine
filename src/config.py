@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 # Base paths
@@ -10,6 +11,13 @@ MODEL_PATH = MODELS_DIR / "best_tuned_model_xgboost.joblib"
 THRESHOLD_PATH = MODELS_DIR / "optimal_threshold.joblib"
 FEATURE_NAMES_PATH = MODELS_DIR / "feature_names.joblib"
 PREPROCESSOR_PATH = MODELS_DIR / "preprocessor.joblib"
+
+# MLFlow
+# Opt-in on purpose: when MLFLOW_TRACKING_URI is unset the predictor loads
+# straight from joblib. Attempting an unreachable tracking server costs ~247s of
+# urllib3 retry backoff before failing, which stalls container startup.
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI")
+MLFLOW_MODEL_URI = os.getenv("MLFLOW_MODEL_URI", "models:/CreditScorer/Staging")
 
 # API Config
 API_TITLE = "Credit Risk Engine API"
