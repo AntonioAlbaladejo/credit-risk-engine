@@ -17,6 +17,62 @@ from src.config import (
 
 logger = logging.getLogger(__name__)
 
+# Bin edges shared by training and serving. The lower age edge is 17, not 18, so
+# that an applicant aged exactly MIN_AGE lands in the first bucket instead of
+# falling outside every interval and being imputed to the mode.
+AGE_BINS = [17, 25, 35, 45, 55, 65, 120]
+AGE_LABELS = ["18-24", "25-34", "35-44", "45-54", "55-64", "65+"]
+EMP_LENGTH_BINS = [-1, 0, 1, 3, 5, 10, 100]
+EMP_LENGTH_LABELS = ["0", "1", "2-3", "4-5", "6-10", "10+"]
+
+
+def create_derived_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Create the engineered features the model expects.
+
+    Single source of truth for training and inference. Any divergence between
+    the two produces train/serve skew that no test would catch, so both paths
+    import this function rather than reimplementing it.
+
+    Args:
+        df: DataFrame with the raw applicant and loan columns.
+
+    Returns:
+        A copy of ``df`` with the derived columns added.
+    """
+    df_fe = df.copy()
+
+    # Loan to income ratio
+    df_fe["loan_to_income"] = df_fe["loan_amnt"] / (
+        df_fe["person_income"].replace(0, 0.01)  # Avoid division by zero
+    )
+
+    # Employment length to age ratio
+    df_fe["employ_to_age"] = df_fe["person_emp_length"] / (
+        df_fe["person_age"].replace(0, 0.01)  # Avoid division by zero
+    )
+
+    # Age buckets
+    df_fe["age_bucket"] = pd.cut(df_fe["person_age"], bins=AGE_BINS, labels=AGE_LABELS)
+
+    # Employment length bins
+    df_fe["emp_length_bin"] = pd.cut(
+        df_fe["person_emp_length"].fillna(0),
+        bins=EMP_LENGTH_BINS,
+        labels=EMP_LENGTH_LABELS,
+    )
+
+    # Default flag. The raw dataset encodes this as Y/N while the API sends 0/1,
+    # so both spellings have to land on the same numeric flag.
+    default_on_file = df_fe["cb_person_default_on_file"]
+    if default_on_file.dtype == object:
+        df_fe["default_flag"] = (
+            default_on_file.astype(str).str.upper().map({"Y": 1, "N": 0}).astype(int)
+        )
+    else:
+        df_fe["default_flag"] = default_on_file.astype(int)
+
+    return df_fe
+
 
 class DataPreprocessor:
     """Handle the transformation of raw input data to the format expected by the model"""
@@ -214,45 +270,8 @@ class DataPreprocessor:
         return feature_names
 
     def _create_derived_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Creates derived features from the original features (as done in feature engineering notebook)
-
-        Args:
-            df: DataFrame with original features
-
-        Returns:
-            DataFrame with derived features added
-        """
-        df_fe = df.copy()
-
-        # Loan to income ratio
-        df_fe["loan_to_income"] = df_fe["loan_amnt"] / (
-            df_fe["person_income"].replace(0, 0.01)  # Avoid division by zero
-        )
-
-        # Employment length to age ratio
-        df_fe["employ_to_age"] = df_fe["person_emp_length"] / (
-            df_fe["person_age"].replace(0, 0.01)  # Avoid division by zero
-        )
-
-        # Age buckets
-        df_fe["age_bucket"] = pd.cut(
-            df_fe["person_age"],
-            bins=[18, 25, 35, 45, 55, 65, 120],
-            labels=["18-24", "25-34", "35-44", "45-54", "55-64", "65+"],
-        )
-
-        # Employment length bins
-        df_fe["emp_length_bin"] = pd.cut(
-            df_fe["person_emp_length"].fillna(0),
-            bins=[-1, 0, 1, 3, 5, 10, 100],
-            labels=["0", "1", "2-3", "4-5", "6-10", "10+"],
-        )
-
-        # Default flag
-        df_fe["default_flag"] = df_fe["cb_person_default_on_file"].astype(int)
-
-        return df_fe
+        """Delegates to the shared implementation used by the training pipeline."""
+        return create_derived_features(df)
 
     def preprocess(self, data: dict) -> pd.DataFrame:
         """

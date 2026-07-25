@@ -4,8 +4,59 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.config import FEATURE_NAMES_PATH, PREPROCESSOR_PATH
-from src.preprocessing import DataPreprocessor
+from src.config import FEATURE_NAMES_PATH, MIN_AGE, PREPROCESSOR_PATH
+from src.preprocessing import DataPreprocessor, create_derived_features
+
+
+class TestCreateDerivedFeatures:
+    """Test the feature derivation shared by training and serving.
+
+    These exercise the real function rather than a mock: it is pure, and it is
+    the one piece of logic that both paths have to agree on.
+    """
+
+    @pytest.fixture
+    def raw_row(self):
+        return {
+            "person_age": 35,
+            "person_income": 50000,
+            "person_emp_length": 10,
+            "person_home_ownership": "OWN",
+            "loan_intent": "PERSONAL",
+            "loan_grade": "A",
+            "loan_amnt": 5000,
+            "loan_int_rate": 11.5,
+            "loan_percent_income": 0.1,
+            "cb_person_default_on_file": 0,
+            "cb_person_cred_hist_length": 8,
+        }
+
+    def test_minimum_age_lands_in_first_bucket(self, raw_row):
+        """An applicant at exactly MIN_AGE must get a bucket, not NaN.
+
+        pd.cut is open on the left, so bins starting at 18 dropped 18-year-olds
+        out of every interval; the imputer then silently replaced them with the
+        modal bucket.
+        """
+        raw_row["person_age"] = MIN_AGE
+        result = create_derived_features(pd.DataFrame([raw_row]))
+        assert result["age_bucket"].iloc[0] == "18-24"
+        assert result["age_bucket"].notna().all()
+
+    @pytest.mark.parametrize(
+        ("value", "expected"), [(0, 0), (1, 1), ("N", 0), ("Y", 1), ("y", 1)]
+    )
+    def test_default_flag_accepts_both_encodings(self, raw_row, value, expected):
+        """The raw dataset uses Y/N, the API sends 0/1, both must agree."""
+        raw_row["cb_person_default_on_file"] = value
+        result = create_derived_features(pd.DataFrame([raw_row]))
+        assert result["default_flag"].iloc[0] == expected
+
+    def test_zero_income_does_not_produce_inf(self, raw_row):
+        """loan_to_income must stay finite when income is zero."""
+        raw_row["person_income"] = 0
+        result = create_derived_features(pd.DataFrame([raw_row]))
+        assert np.isfinite(result["loan_to_income"].iloc[0])
 
 
 class TestDataPreprocessorInitialization:
