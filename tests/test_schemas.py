@@ -52,7 +52,7 @@ class TestLoanApplicationSchema:
             "loan_intent": "PERSONAL",
             "loan_grade": "A",
             "loan_amnt": 5000,
-            "loan_int_rate": 0.08,
+            "loan_int_rate": 11.5,
             "loan_percent_income": 0.1,
             "cb_person_default_on_file": 0,
             "cb_person_cred_hist_length": 8,
@@ -122,9 +122,31 @@ class TestLoanApplicationSchema:
 
     def test_interest_rate_too_high(self, valid_application):
         """Test interest rate above maximum"""
-        valid_application["loan_int_rate"] = 1.5
+        valid_application["loan_int_rate"] = 75.0
         with pytest.raises(ValidationError):
             LoanApplication(**valid_application)
+
+    @pytest.mark.parametrize("rate", [0.08, 0.115, 0.23])
+    def test_interest_rate_rejects_fractional_scale(self, valid_application, rate):
+        """A rate passed as a fraction is a scale error, not a cheap loan.
+
+        Accepting 0.08 for "8%" would scale it to roughly -3.5 sigma and return
+        a confident prediction from an input the model has never seen.
+        """
+        valid_application["loan_int_rate"] = rate
+        with pytest.raises(ValidationError):
+            LoanApplication(**valid_application)
+
+    @pytest.mark.parametrize("rate", [5.42, 11.03, 16.02, 23.22])
+    def test_interest_rate_accepts_training_range(self, valid_application, rate):
+        """Rates are percentages, matching the scale the model was trained on.
+
+        The observed training range is 5.42-23.22. An earlier bound of le=1
+        rejected every realistic rate while silently accepting fractions that
+        land ~3.5 standard deviations outside anything the model has seen.
+        """
+        valid_application["loan_int_rate"] = rate
+        assert LoanApplication(**valid_application).loan_int_rate == rate
 
     def test_loan_percent_income_above_max(self, valid_application):
         """Test loan percent income above maximum"""
@@ -165,7 +187,7 @@ class TestBatchPredictionRequest:
             "loan_intent": "PERSONAL",
             "loan_grade": "A",
             "loan_amnt": 5000,
-            "loan_int_rate": 0.08,
+            "loan_int_rate": 11.5,
             "loan_percent_income": 0.1,
             "cb_person_default_on_file": 0,
             "cb_person_cred_hist_length": 8,

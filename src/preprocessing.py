@@ -8,9 +8,11 @@ from src.config import (
     MAX_AGE,
     MAX_EMP_LENGTH,
     MAX_LOAN_AMOUNT,
+    MAX_LOAN_INT_RATE,
     MIN_AGE,
     MIN_EMP_LENGTH,
     MIN_LOAN_AMOUNT,
+    MIN_LOAN_INT_RATE,
 )
 
 logger = logging.getLogger(__name__)
@@ -106,8 +108,14 @@ class DataPreprocessor:
         if data.get("person_income") < 0:
             raise ValueError("person_income must be non-negative (0 is allowed)")
 
-        if data.get("loan_int_rate") < 0:
-            raise ValueError("loan_int_rate must be a positive value")
+        if (
+            data.get("loan_int_rate") < MIN_LOAN_INT_RATE
+            or data.get("loan_int_rate") > MAX_LOAN_INT_RATE
+        ):
+            raise ValueError(
+                f"loan_int_rate is a percentage and must be between "
+                f"{MIN_LOAN_INT_RATE} and {MAX_LOAN_INT_RATE}"
+            )
 
         if data.get("loan_percent_income") < 0 or data.get("loan_percent_income") > 1:
             raise ValueError("loan_percent_income must be between 0 and 1")

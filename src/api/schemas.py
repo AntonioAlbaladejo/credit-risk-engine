@@ -6,9 +6,11 @@ from src.config import (
     MAX_AGE,
     MAX_EMP_LENGTH,
     MAX_LOAN_AMOUNT,
+    MAX_LOAN_INT_RATE,
     MIN_AGE,
     MIN_EMP_LENGTH,
     MIN_LOAN_AMOUNT,
+    MIN_LOAN_INT_RATE,
 )
 
 
@@ -67,7 +69,12 @@ class LoanApplication(BaseModel):
         le=MAX_LOAN_AMOUNT,
         description="Requested loan amount in dollars",
     )
-    loan_int_rate: float = Field(..., ge=0, le=1, description="Interest rate")
+    loan_int_rate: float = Field(
+        ...,
+        ge=MIN_LOAN_INT_RATE,
+        le=MAX_LOAN_INT_RATE,
+        description="Annual interest rate as a percentage, e.g. 11.5 for 11.5%",
+    )
     loan_percent_income: float = Field(
         ..., ge=0, le=1, description="Percentage of income"
     )
@@ -88,7 +95,7 @@ class LoanApplication(BaseModel):
                 "loan_intent": "PERSONAL",
                 "loan_grade": "A",
                 "loan_amnt": 5000,
-                "loan_int_rate": 0.08,
+                "loan_int_rate": 11.5,
                 "loan_percent_income": 0.1,
                 "cb_person_default_on_file": 0,
                 "cb_person_cred_hist_length": 8,

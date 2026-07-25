@@ -34,3 +34,10 @@ MIN_EMP_LENGTH = 0
 MAX_EMP_LENGTH = 80
 MIN_LOAN_AMOUNT = 500
 MAX_LOAN_AMOUNT = 100000
+# Annual interest rate as a PERCENTAGE, matching the training data
+# (observed range 5.42 - 23.22). Bounds are wider than observed to leave
+# operational headroom, but the floor stays at 1.0 on purpose: a caller passing
+# the rate as a fraction (0.08 for 8%) must be rejected rather than silently
+# scaled to ~3.5 standard deviations below anything the model has seen.
+MIN_LOAN_INT_RATE = 1.0
+MAX_LOAN_INT_RATE = 50.0
