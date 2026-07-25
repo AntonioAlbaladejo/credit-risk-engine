@@ -1,12 +1,16 @@
 name: CD - Build and Deploy
 
 on:
-  push:
-    branches: [ main ]
   workflow_run:
     workflows: [ "CI - Lint and Test" ]
     types: [ completed ]
     branches: [ main ]
+
+# One deployment at a time. Queue rather than cancel: an interrupted run would
+# leave a half-finished rollout on the service.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   AWS_REGION: eu-west-1
@@ -21,11 +25,15 @@ jobs:
   build-and-test:
     name: Build & Verify Image
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event.workflow_run.conclusion == 'success'
-    
+    if: github.event.workflow_run.conclusion == 'success'
+
     steps:
+      # workflow_run runs against the default branch by default, so the ref has
+      # to be pinned to the commit CI actually validated.
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -89,10 +97,12 @@ jobs:
     name: Push to ECR & Deploy to Fargate
     runs-on: ubuntu-latest
     needs: build-and-test
-    
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -109,7 +119,9 @@ jobs:
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+          # Not github.sha: on workflow_run that points at the default branch
+          # head, which can differ from the commit being deployed.
+          IMAGE_TAG: ${{ github.event.workflow_run.head_sha }}
         run: |
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
