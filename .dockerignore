@@ -15,10 +15,13 @@ build/
 
 # Development
 .vscode
+.claude
 .env
 .env.local
 venv/
 .venv/
+.conda/
+CLAUDE.md
 
 # Notebooks (not needed in production)
 notebooks/
@@ -26,6 +29,22 @@ notebooks/
 # Data and results
 data/
 results/
+
+# Tests, docs and CI config (not needed at runtime)
+tests/
+docs/
+.github/
+.coverage
+coverage.xml
+.ruff_cache
+requirements.txt.bak
+
+# MLflow local tracking store and artifacts
+mlruns/
+mlartifacts/
+mlflow.db
+mlflow.db-shm
+mlflow.db-wal
 
 # Others
 .DS_Store
