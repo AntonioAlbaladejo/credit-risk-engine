@@ -11,9 +11,13 @@ Runs three arms so the two open questions can be answered with numbers:
   clean-weighted     correct split, scale_pos_weight (current production setup)
   clean-unweighted   correct split, no imbalance handling
 
+A fourth mode compares the candidate algorithms themselves under that same
+clean pipeline, which is what backs the model-selection table in the README.
+
 Usage:
     uv run python scripts/train.py                 # compare arms, write no artifacts
     uv run python scripts/train.py --save <arm>    # promote one arm to models/
+    uv run python scripts/train.py --baselines     # compare LR / RF / XGBoost / SVM
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import VarianceThreshold
 from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -42,6 +47,7 @@ from sklearn.metrics import (
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.svm import SVC
 from xgboost import XGBClassifier
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -175,10 +181,12 @@ def evaluate(y_true, proba, threshold: float) -> dict:
     }
 
 
-def run_arm(name: str, df: pd.DataFrame, *, leaky: bool, weighted: bool) -> dict:
-    """Train and evaluate one configuration end to end."""
-    logger.info("\n%s\n=== %s ===", "-" * 70, name)
+def prepare(df: pd.DataFrame, *, leaky: bool) -> dict:
+    """Split, fit the preprocessor and select features.
 
+    Shared by every caller on purpose: a second copy of the split is exactly
+    how the fit-before-split bug would come back.
+    """
     y_all = df[TARGET]
     X_all = create_derived_features(df.drop(columns=[TARGET]))
     numeric_cols = X_all.select_dtypes(include=[np.number]).columns.tolist()
@@ -195,34 +203,39 @@ def run_arm(name: str, df: pd.DataFrame, *, leaky: bool, weighted: bool) -> dict
 
     if leaky:
         # Reproduces the notebook: fit and select on everything, split afterwards.
-        pre = build_preprocessor(numeric_cols, cat_cols).fit(X_all)
-        names = strip_prefix(pre.get_feature_names_out())
-        selected = select_features(
-            pd.DataFrame(pre.transform(X_all), columns=names), y_all
-        )
+        fit_X, fit_y = X_all, y_all
     else:
-        pre = build_preprocessor(numeric_cols, cat_cols).fit(X_train)
-        names = strip_prefix(pre.get_feature_names_out())
-        selected = select_features(
-            pd.DataFrame(pre.transform(X_train), columns=names), y_train
-        )
+        fit_X, fit_y = X_train, y_train
+
+    pre = build_preprocessor(numeric_cols, cat_cols).fit(fit_X)
+    names = strip_prefix(pre.get_feature_names_out())
+    selected = select_features(pd.DataFrame(pre.transform(fit_X), columns=names), fit_y)
 
     def prep(X):
         return pd.DataFrame(pre.transform(X), columns=names)[selected]
 
-    Xtr, Xval, Xte = prep(X_train), prep(X_val), prep(X_test)
+    return {
+        "Xtr": prep(X_train),
+        "Xval": prep(X_val),
+        "Xte": prep(X_test),
+        "y_train": y_train,
+        "y_val": y_val,
+        "y_test": y_test,
+        "preprocessor": pre,
+        "features": selected,
+    }
 
-    ratio = float((y_train == 0).sum() / (y_train == 1).sum())
-    model = XGBClassifier(
-        **XGB_PARAMS,
-        random_state=RANDOM_STATE,
-        eval_metric="logloss",
-        scale_pos_weight=ratio if weighted else 1.0,
-    ).fit(Xtr, y_train)
 
-    threshold, threshold_table = pick_threshold(y_val, model.predict_proba(Xval)[:, 1])
-    metrics = evaluate(y_test, model.predict_proba(Xte)[:, 1], threshold)
-    metrics |= {"threshold": threshold, "n_features": len(selected)}
+def score_model(model, data: dict) -> tuple[dict, pd.DataFrame]:
+    """Fit on train, choose the threshold on validation, score once on test."""
+    model.fit(data["Xtr"], data["y_train"])
+    threshold, threshold_table = pick_threshold(
+        data["y_val"], model.predict_proba(data["Xval"])[:, 1]
+    )
+    metrics = evaluate(
+        data["y_test"], model.predict_proba(data["Xte"])[:, 1], threshold
+    )
+    metrics |= {"threshold": threshold, "n_features": len(data["features"])}
 
     logger.info(
         "  threshold=%.2f  ROC-AUC=%.4f  PR-AUC=%.4f  Brier=%.4f  F1=%.4f",
@@ -232,19 +245,85 @@ def run_arm(name: str, df: pd.DataFrame, *, leaky: bool, weighted: bool) -> dict
         metrics["Brier"],
         metrics["F1-Score"],
     )
+    return metrics, threshold_table
+
+
+def run_arm(name: str, df: pd.DataFrame, *, leaky: bool, weighted: bool) -> dict:
+    """Train and evaluate one configuration end to end."""
+    logger.info("\n%s\n=== %s ===", "-" * 70, name)
+
+    data = prepare(df, leaky=leaky)
+    y_train = data["y_train"]
+
+    ratio = float((y_train == 0).sum() / (y_train == 1).sum())
+    model = XGBClassifier(
+        **XGB_PARAMS,
+        random_state=RANDOM_STATE,
+        eval_metric="logloss",
+        scale_pos_weight=ratio if weighted else 1.0,
+    )
+    metrics, threshold_table = score_model(model, data)
 
     return {
         "arm": name,
+        # The two factors go in as separate params, not just fused into the arm
+        # name, so the comparison can be grouped and filtered by either one.
+        "params": XGB_PARAMS
+        | {
+            "leaky": leaky,
+            "weighted": weighted,
+            "scale_pos_weight": model.scale_pos_weight,
+        },
         "metrics": metrics,
         "model": model,
-        "preprocessor": pre,
-        "features": selected,
-        "threshold": threshold,
+        "preprocessor": data["preprocessor"],
+        "features": data["features"],
+        "threshold": metrics["threshold"],
         "threshold_table": threshold_table,
     }
 
 
-def log_to_mlflow(results: list[dict]) -> None:
+def run_baselines(df: pd.DataFrame) -> list[dict]:
+    """Compare the four candidate algorithms under the clean pipeline.
+
+    Same split, same preprocessor, same feature set and no imbalance handling
+    anywhere, so the only variable left is the algorithm. The XGBoost row is by
+    construction the model that ships.
+    """
+    data = prepare(df, leaky=False)
+
+    candidates = {
+        "Logistic Regression": LogisticRegression(
+            max_iter=1000, random_state=RANDOM_STATE
+        ),
+        "Random Forest": RandomForestClassifier(
+            n_estimators=100, random_state=RANDOM_STATE, n_jobs=-1
+        ),
+        "XGBoost": XGBClassifier(
+            **XGB_PARAMS, random_state=RANDOM_STATE, eval_metric="logloss"
+        ),
+        # Features are already scaled by the preprocessor, so the RBF kernel is
+        # on a sane footing. probability=True adds an internal Platt calibration
+        # pass, which is what makes the Brier column comparable.
+        "SVM (RBF)": SVC(kernel="rbf", probability=True, random_state=RANDOM_STATE),
+    }
+
+    results = []
+    for name, model in candidates.items():
+        logger.info("\n%s\n=== %s ===", "-" * 70, name)
+        metrics, _ = score_model(model, data)
+        results.append(
+            {
+                "arm": name,
+                "params": model.get_params(),
+                "metrics": metrics,
+                "threshold": metrics["threshold"],
+            }
+        )
+    return results
+
+
+def log_to_mlflow(results: list[dict], experiment: str) -> None:
     """Log every arm as an MLflow run. Skipped silently if MLflow is unavailable."""
     try:
         import mlflow
@@ -256,12 +335,12 @@ def log_to_mlflow(results: list[dict]) -> None:
 
     uri = os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
     mlflow.set_tracking_uri(uri)
-    mlflow.set_experiment("credit-risk-leakage-and-weighting")
+    mlflow.set_experiment(experiment)
 
     for r in results:
         with mlflow.start_run(run_name=r["arm"]):
             mlflow.log_params(
-                XGB_PARAMS
+                r["params"]
                 | {
                     "arm": r["arm"],
                     "n_features": r["metrics"]["n_features"],
@@ -282,31 +361,47 @@ def main() -> None:
         choices=["clean-weighted", "clean-unweighted"],
         help="promote this arm's artifacts to models/",
     )
+    parser.add_argument(
+        "--baselines",
+        action="store_true",
+        help="compare the four candidate algorithms instead of the three arms",
+    )
     parser.add_argument("--no-mlflow", action="store_true")
     args = parser.parse_args()
+
+    if args.baselines and args.save:
+        parser.error("--save promotes an arm; it does not apply to --baselines")
 
     df = pd.read_csv(DATA_DIR / "credit_risk_cleaned.csv")
     logger.info("dataset: %d rows, %.2f%% positives", len(df), 100 * df[TARGET].mean())
 
-    results = [
-        run_arm("leaky-weighted", df, leaky=True, weighted=True),
-        run_arm("clean-weighted", df, leaky=False, weighted=True),
-        run_arm("clean-unweighted", df, leaky=False, weighted=False),
-    ]
+    if args.baselines:
+        results = run_baselines(df)
+        experiment = "credit-risk-baselines"
+        out = RESULTS_DIR / "baseline_comparison.csv"
+        index_name = "model"
+    else:
+        results = [
+            run_arm("leaky-weighted", df, leaky=True, weighted=True),
+            run_arm("clean-weighted", df, leaky=False, weighted=True),
+            run_arm("clean-unweighted", df, leaky=False, weighted=False),
+        ]
+        experiment = "credit-risk-leakage-and-weighting"
+        out = RESULTS_DIR / "leakage_and_weighting_comparison.csv"
+        index_name = "arm"
 
     table = pd.DataFrame(
-        [{"arm": r["arm"], **r["metrics"]} for r in results]
-    ).set_index("arm")
+        [{index_name: r["arm"], **r["metrics"]} for r in results]
+    ).set_index(index_name)
     logger.info("\n%s\nTEST SET COMPARISON\n%s", "=" * 100, "=" * 100)
     logger.info(table.round(4).to_string())
 
     RESULTS_DIR.mkdir(exist_ok=True)
-    out = RESULTS_DIR / "leakage_and_weighting_comparison.csv"
     table.to_csv(out)
     logger.info("\nSaved comparison to %s", out)
 
     if not args.no_mlflow:
-        log_to_mlflow(results)
+        log_to_mlflow(results, experiment)
 
     if args.save:
         chosen = next(r for r in results if r["arm"] == args.save)

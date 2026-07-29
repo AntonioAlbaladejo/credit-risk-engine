@@ -33,6 +33,8 @@ results/
 # Tests, docs and CI config (not needed at runtime)
 tests/
 docs/
+assets/
+scripts/
 .github/
 .coverage
 coverage.xml

@@ -230,6 +230,11 @@ models/*.h5
 # Resultados
 results/*.csv
 
+# Excepción con las tablas que cita el README, para que sean verificables
+!results/baseline_comparison.csv
+!results/leakage_and_weighting_comparison.csv
+!results/threshold_optimization.csv
+
 # Variables de entorno (Credenciales de APIs o BDs)
 .env
 .env.local
