@@ -68,8 +68,11 @@ RANDOM_STATE = 42
 TARGET = "loan_status"
 RESULTS_DIR = Path(__file__).resolve().parents[1] / "results"
 
-# Hyperparameters from the GridSearchCV run in model_selection.ipynb. Held fixed
-# across arms so each comparison isolates a single variable.
+# Hyperparameters from the GridSearchCV run in model_selection.ipynb. The grid is
+# scored on PR-AUC and selected with the one-standard-error rule: 15 of the 81
+# configurations land within one standard error of the best, and this is the
+# simplest of them. Held fixed across arms so each comparison isolates a single
+# variable.
 XGB_PARAMS = {
     "n_estimators": 300,
     "max_depth": 4,
