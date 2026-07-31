@@ -8,8 +8,13 @@ import pytest
 
 # Mock the model loading to avoid numpy._core import issues
 @pytest.fixture(autouse=True)
-def mock_model_loading(monkeypatch):
+def mock_model_loading(request, monkeypatch):
     """Mock model loading to avoid numpy compatibility issues"""
+
+    # Tests marked real_artifacts load models/*.joblib on purpose; mocking
+    # joblib.load for them would remove the only thing they verify.
+    if request.node.get_closest_marker("real_artifacts"):
+        return
 
     # Create a mock model that behaves like XGBoost
     mock_model = Mock()
