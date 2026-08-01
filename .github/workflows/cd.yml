@@ -22,8 +22,11 @@ env:
   CONTAINER_PORT: 8000
 
 jobs:
-  build-and-test:
-    name: Build & Verify Image
+  # Build, verification and push share a job on purpose: the image that reaches
+  # ECR has to be the exact one the verification step exercised. Rebuilding in a
+  # second job pushed bytes nobody had run a prediction against.
+  build-verify-deploy:
+    name: Build, Verify & Deploy
     runs-on: ubuntu-latest
     if: github.event.workflow_run.conclusion == 'success'
 
@@ -91,17 +94,6 @@ jobs:
 
           docker rm -f verify
 
-  deploy-to-aws:
-    name: Push to ECR & Deploy to Fargate
-    runs-on: ubuntu-latest
-    needs: build-and-test
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -113,17 +105,21 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag, and push image to Amazon ECR
+      - name: Tag and push the verified image to Amazon ECR
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           # Not github.sha: on workflow_run that points at the default branch
           # head, which can differ from the commit being deployed.
           IMAGE_TAG: ${{ github.event.workflow_run.head_sha }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          # Retag, never rebuild: these are the bytes the step above served a
+          # prediction from.
+          for TAG in "$IMAGE_TAG" "$VERSION" latest; do
+            docker tag credit-risk-engine:latest "$ECR_REGISTRY/$ECR_REPOSITORY:$TAG"
+            docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$TAG"
+          done
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
       - name: Download Active Task Definition from AWS
