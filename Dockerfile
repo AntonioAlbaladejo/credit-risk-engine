@@ -3,8 +3,9 @@ FROM python:3.11.10-slim as builder
 
 WORKDIR /build
 
-# Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# Install uv. Pinned: :latest let two builds of the same commit resolve
+# different uv versions, which is the kind of drift uv.lock cannot cover.
+COPY --from=ghcr.io/astral-sh/uv:0.12.1 /uv /uvx /bin/
 
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
