@@ -168,6 +168,66 @@ class TestDataValidation:
             preprocessor._validate_input(valid_data)
 
 
+class TestTransformedFeatureNames:
+    """Test how the transformed columns get their names.
+
+    transform() returns an unlabelled array, so the names are attached by
+    position. They have to come from the fitted transformer itself: any other
+    source relabels the columns without touching the values, which no assertion
+    downstream would notice.
+    """
+
+    def test_preprocessor_without_get_feature_names_out_is_rejected(self, monkeypatch):
+        """Loading must fail loudly rather than fall back to a guessed order.
+
+        The order that used to be assumed here put person_home_ownership as
+        RENT, OWN, MORTGAGE, OTHER, while the fitted encoder emits them
+        alphabetically. person_home_ownership_MORTGAGE is one of the selected
+        features, so the model would have been served the RENT column under the
+        MORTGAGE name, silently and forever.
+        """
+        import joblib
+
+        class NamelessTransformer:
+            """A transformer that can transform but cannot name its output."""
+
+            def transform(self, X):
+                return np.zeros((len(X), 41))
+
+        def load_nameless(filename):
+            if "preprocessor" in str(filename):
+                return NamelessTransformer()
+            return ["default_flag"]
+
+        monkeypatch.setattr(joblib, "load", load_nameless)
+
+        with pytest.raises(AttributeError, match="get_feature_names_out"):
+            DataPreprocessor(PREPROCESSOR_PATH, FEATURE_NAMES_PATH)
+
+    @pytest.mark.real_artifacts
+    def test_real_bundle_names_match_the_encoder_layout(self):
+        """Pin the spellings and the order the real preprocessor produces."""
+        preprocessor = DataPreprocessor(PREPROCESSOR_PATH, FEATURE_NAMES_PATH)
+        names = preprocessor._transformed_names
+
+        assert len(names) == 41
+        # Categories come out alphabetically, not in the order they are listed
+        # in VALID_HOME_OWNERSHIP.
+        assert [n for n in names if n.startswith("person_home_ownership_")] == [
+            "person_home_ownership_MORTGAGE",
+            "person_home_ownership_OTHER",
+            "person_home_ownership_OWN",
+            "person_home_ownership_RENT",
+        ]
+        # The encoder was fitted on the raw Y/N spelling, not on the 0/1 the
+        # API accepts.
+        assert "cb_person_default_on_file_N" in names
+        assert "cb_person_default_on_file_Y" in names
+
+        # Every selected feature has to be resolvable, or preprocess() raises.
+        assert set(preprocessor.feature_names).issubset(names)
+
+
 class TestPreprocessing:
     """Test preprocessing functionality"""
 

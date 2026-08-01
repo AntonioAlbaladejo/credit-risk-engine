@@ -101,6 +101,10 @@ class DataPreprocessor:
         try:
             self.preprocessor = joblib.load(preprocessor_path)
             self.feature_names = joblib.load(feature_names_path)
+            # Resolved once, at load time, so a preprocessor that cannot name
+            # its own output fails here -- where /health reports it -- instead
+            # of on the first prediction.
+            self._transformed_names = self._get_feature_names_from_preprocessor()
             logger.info("Preprocessor loaded successfully")
         except Exception as e:
             logger.error(f"Error loading preprocessor: {e}")
@@ -178,96 +182,33 @@ class DataPreprocessor:
 
     def _get_feature_names_from_preprocessor(self) -> list[str]:
         """
-        Reconstructs feature names from the ColumnTransformer since get_feature_names_out()
-        may not be available due to sklearn version incompatibility.
+        Asks the fitted ColumnTransformer for the names of the columns it emits.
 
-        The order matches the ColumnTransformer structure:
-        1. Numeric features (scaled, not renamed): 11 total
-        2. Categorical features (one-hot encoded): 29 total (4+6+7+6+6)
+        The names are only meaningful in the order transform() produces them:
+        they are attached positionally to an unlabelled array, so an order that
+        does not come from the fitted transformer itself relabels the columns
+        without changing the values. That mislabelling is silent -- every
+        downstream consumer keeps working on the wrong feature.
 
         Returns:
-            List of 41 feature names in the order produced by preprocessor.transform()
+            The transformed column names, with the ``num__`` / ``cat__`` step
+            prefixes stripped.
+
+        Raises:
+            AttributeError: If the preprocessor cannot report its output names.
         """
-
-        try:
-            # Try to get feature names directly (works with newer sklearn)
-            all_names = list(self.preprocessor.get_feature_names_out())
-            # Remove prefixes like 'num__' and 'cat__'
-            feature_names = [
-                name.split("__", 1)[1] if "__" in name else name for name in all_names
-            ]
-            return feature_names
-        except (AttributeError, TypeError):
-            pass
-
-        # Fallback: reconstruct feature names based on ColumnTransformer structure
-        feature_names = []
-
-        numeric_features = [
-            "person_age",
-            "person_income",
-            "person_emp_length",
-            "loan_amnt",
-            "loan_int_rate",
-            "loan_percent_income",
-            "cb_person_cred_hist_length",
-            "loan_to_income",
-            "employ_to_age",
-            "default_flag",
-        ]
-        feature_names.extend(numeric_features)
-
-        # Categorical features (31 total after one-hot encoding)
-        # Order: person_home_ownership, loan_intent, loan_grade, cb_person_default_on_file, age_bucket, emp_length_bin
-        categorical_encoded = [
-            # person_home_ownership (4 categories)
-            "person_home_ownership_RENT",
-            "person_home_ownership_OWN",
-            "person_home_ownership_MORTGAGE",
-            "person_home_ownership_OTHER",
-            # loan_intent (6 categories)
-            "loan_intent_PERSONAL",
-            "loan_intent_EDUCATION",
-            "loan_intent_MEDICAL",
-            "loan_intent_VENTURE",
-            "loan_intent_HOMEIMPROVEMENT",
-            "loan_intent_DEBTCONSOLIDATION",
-            # loan_grade (7 categories)
-            "loan_grade_A",
-            "loan_grade_B",
-            "loan_grade_C",
-            "loan_grade_D",
-            "loan_grade_E",
-            "loan_grade_F",
-            "loan_grade_G",
-            # cb_person_default_on_file (2 categories - binary one-hot)
-            "cb_person_default_on_file_0",
-            "cb_person_default_on_file_1",
-            # age_bucket (6 categories from pd.cut)
-            "age_bucket_18-24",
-            "age_bucket_25-34",
-            "age_bucket_35-44",
-            "age_bucket_45-54",
-            "age_bucket_55-64",
-            "age_bucket_65+",
-            # emp_length_bin (6 categories from pd.cut)
-            "emp_length_bin_0",
-            "emp_length_bin_1",
-            "emp_length_bin_2-3",
-            "emp_length_bin_4-5",
-            "emp_length_bin_6-10",
-            "emp_length_bin_10+",
-        ]
-        feature_names.extend(categorical_encoded)
-
-        # Verify we have the expected number
-        if len(feature_names) != 41:
-            logger.warning(
-                f"Expected 41 features but generated {len(feature_names)}. "
-                f"This may indicate a mismatch in preprocessor configuration."
+        if not hasattr(self.preprocessor, "get_feature_names_out"):
+            raise AttributeError(
+                f"{type(self.preprocessor).__name__} does not expose "
+                "get_feature_names_out(), so the transformed columns cannot be "
+                "named. Rebuild the artifact bundle with the scikit-learn "
+                "version pinned in pyproject.toml."
             )
 
-        return feature_names
+        return [
+            name.split("__", 1)[1] if "__" in name else name
+            for name in self.preprocessor.get_feature_names_out()
+        ]
 
     def _create_derived_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """Delegates to the shared implementation used by the training pipeline."""
@@ -281,7 +222,8 @@ class DataPreprocessor:
             data: Dictionary with raw features
 
         Returns:
-            DataFrame with only the 17 selected features in correct order
+            DataFrame with only the selected features, in the order the model
+            was trained on.
         """
         try:
             # Validate input data
@@ -298,15 +240,11 @@ class DataPreprocessor:
             # Apply preprocessor (imputation, scaling, one-hot encoding)
             X_transformed = self.preprocessor.transform(df_fe)
 
-            # Get feature names - use the reconstructed method
-            feature_names_all = self._get_feature_names_from_preprocessor()
-
             # Create DataFrame with all transformed features
-            X_df_all = pd.DataFrame(X_transformed, columns=feature_names_all)
+            X_df_all = pd.DataFrame(X_transformed, columns=self._transformed_names)
             logger.debug(f"Data transformed. Initial shape: {X_df_all.shape}")
 
             # Select only the features that the model was trained on
-            # self.feature_names contains the 17 selected features
             try:
                 X_df_selected = X_df_all[self.feature_names]
                 logger.debug(
@@ -332,7 +270,7 @@ class DataPreprocessor:
             data_list: List of dictionaries with raw features
 
         Returns:
-            DataFrame with only the 17 selected features for all records
+            DataFrame with only the selected features for all records.
         """
         try:
             # Handle empty list case
@@ -358,11 +296,8 @@ class DataPreprocessor:
             # Apply preprocessor
             X_transformed = self.preprocessor.transform(df_fe)
 
-            # Get feature names - use the reconstructed method
-            feature_names_all = self._get_feature_names_from_preprocessor()
-
             # Create DataFrame with all transformed features
-            X_df_all = pd.DataFrame(X_transformed, columns=feature_names_all)
+            X_df_all = pd.DataFrame(X_transformed, columns=self._transformed_names)
             logger.debug(
                 f"Batch of {len(data_list)} records transformed. Initial shape: {X_df_all.shape}"
             )
@@ -394,18 +329,3 @@ class DataPreprocessor:
             "num_features_after_preprocessing": len(self.feature_names),
             "final_features": self.feature_names,
         }
-
-    def get_transformed_feature_names(self) -> list[str]:
-        """
-        Returns the names of features after transformation.
-        Tries to get them from the preprocessor, falls back to generic names.
-        """
-        try:
-            # Try to get feature names from preprocessor (sklearn 1.3+)
-            return list(self.preprocessor.get_feature_names_out())
-        except (AttributeError, TypeError):
-            # Fallback: generate generic names based on output shape
-            # This is a workaround for sklearn version compatibility
-            return [
-                str(i) for i in range(len(self.feature_names) * 2)
-            ]  # Estimate based on one-hot encoding
