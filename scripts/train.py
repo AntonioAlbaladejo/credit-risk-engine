@@ -68,6 +68,13 @@ RANDOM_STATE = 42
 TARGET = "loan_status"
 RESULTS_DIR = Path(__file__).resolve().parents[1] / "results"
 
+# Present in the raw data but deliberately not offered to the pipeline. Credit
+# history length correlates 0.878 with person_age, so the correlation filter has
+# dropped it on every run; keeping it as an input meant the API demanded a value
+# that could never reach the model. Excluded here so the fitted preprocessor
+# stops expecting it and the request schema can drop the field.
+UNUSED_COLUMNS = ["cb_person_cred_hist_length"]
+
 # Hyperparameters from the GridSearchCV run in model_selection.ipynb. The grid is
 # scored on PR-AUC and selected with the one-standard-error rule: 15 of the 81
 # configurations land within one standard error of the best, and this is the
@@ -120,12 +127,94 @@ def build_preprocessor(
     )
 
 
-def select_features(X: pd.DataFrame, y: pd.Series) -> list[str]:
+def one_hot_blocks(
+    preprocessor: ColumnTransformer, cat_cols: list[str]
+) -> list[list[str]]:
+    """Name the encoded columns that belong to each categorical variable.
+
+    Read off the fitted encoder rather than guessed from column prefixes, for
+    the same reason the serving path does it: the categories and their spelling
+    are a property of the fit, not of the source column names.
+
+    Args:
+        preprocessor: A fitted ColumnTransformer built by ``build_preprocessor``.
+        cat_cols: The categorical columns, in the order they were passed to it.
+
+    Returns:
+        One list of encoded column names per categorical variable.
+    """
+    ohe = preprocessor.named_transformers_["cat"]["ohe"]
+    return [
+        [f"{col}_{category}" for category in categories]
+        for col, categories in zip(cat_cols, ohe.categories_, strict=True)
+    ]
+
+
+def keep_blocks_whole(
+    selected: list[str], available: list[str], blocks: list[list[str]]
+) -> list[str]:
+    """Re-add the siblings of any one-hot column that survived selection.
+
+    Dropping a single column out of a one-hot block does not remove
+    information: the block is exhaustive, so the missing category is still
+    identified by the all-zeros pattern. Dropping *two or more* does, because
+    the survivors become indistinguishable from each other. That is silent --
+    the model simply learns the merged group's average risk.
+
+    It bit loan_grade: the importance filter kept A, C, D and E, leaving B, F
+    and G fused into one all-zeros bucket that is 97% grade B. F (70.3% default)
+    and G (98.4%) inherited B's 15.9%, and with F and G at 0.94% of the rows no
+    aggregate metric moved.
+
+    So a block is kept whole or dropped whole. The cost is a handful of columns
+    a per-column filter would have called weak; the alternative is a model that
+    is confidently wrong about its riskiest applicants.
+
+    Args:
+        selected: Columns the filters kept.
+        available: Everything the preprocessor emits, in its order -- measured
+            *before* the correlation filter runs, since that filter is no better
+            suited to one-hot blocks than the others. It dropped
+            person_home_ownership_RENT for correlating 0.853 with
+            person_home_ownership_MORTGAGE, but that figure is mechanical: two
+            mutually exclusive dummies at 50% and 41% prevalence are
+            anti-correlated by construction. Compare loan_to_income against
+            loan_percent_income at 0.999, which is real duplication.
+        blocks: One-hot blocks, as returned by ``one_hot_blocks``.
+
+    Returns:
+        ``selected`` plus the reinstated siblings, in ``available`` order.
+    """
+    keep = set(selected)
+    for block in blocks:
+        present = [c for c in block if c in available]
+        if keep.intersection(present):
+            keep.update(present)
+    return [c for c in available if c in keep]
+
+
+def select_features(
+    X: pd.DataFrame, y: pd.Series, blocks: list[list[str]]
+) -> list[str]:
     """Three-stage filter: correlation, tree importance, then variance.
 
     Must only ever see training data. Running this on the full dataset is what
     made the original metrics optimistic.
+
+    The three filters score columns one at a time, which is wrong for one-hot
+    blocks, so ``keep_blocks_whole`` repairs their verdict at the end rather
+    than each filter having to know about encoding.
+
+    Args:
+        X: Transformed training matrix.
+        y: Training labels.
+        blocks: One-hot blocks, as returned by ``one_hot_blocks``.
+
+    Returns:
+        The selected column names, in the order ``X`` presents them.
     """
+    available = X.columns.tolist()
+
     corr = X.corr().abs()
     upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
     dropped = [c for c in upper.columns if any(upper[c] > CORRELATION_THRESHOLD)]
@@ -142,6 +231,9 @@ def select_features(X: pd.DataFrame, y: pd.Series) -> list[str]:
     selector = VarianceThreshold(threshold=VARIANCE_THRESHOLD).fit(X)
     keep = X.columns[selector.get_support()].tolist()
     logger.info("  variance     : -> %d features", len(keep))
+
+    keep = keep_blocks_whole(keep, available, blocks)
+    logger.info("  whole blocks : -> %d features", len(keep))
     return keep
 
 
@@ -191,7 +283,7 @@ def prepare(df: pd.DataFrame, *, leaky: bool) -> dict:
     how the fit-before-split bug would come back.
     """
     y_all = df[TARGET]
-    X_all = create_derived_features(df.drop(columns=[TARGET]))
+    X_all = create_derived_features(df.drop(columns=[TARGET, *UNUSED_COLUMNS]))
     numeric_cols = X_all.select_dtypes(include=[np.number]).columns.tolist()
     cat_cols = X_all.select_dtypes(include=["object", "category"]).columns.tolist()
 
@@ -212,7 +304,11 @@ def prepare(df: pd.DataFrame, *, leaky: bool) -> dict:
 
     pre = build_preprocessor(numeric_cols, cat_cols).fit(fit_X)
     names = strip_prefix(pre.get_feature_names_out())
-    selected = select_features(pd.DataFrame(pre.transform(fit_X), columns=names), fit_y)
+    selected = select_features(
+        pd.DataFrame(pre.transform(fit_X), columns=names),
+        fit_y,
+        one_hot_blocks(pre, cat_cols),
+    )
 
     def prep(X):
         return pd.DataFrame(pre.transform(X), columns=names)[selected]

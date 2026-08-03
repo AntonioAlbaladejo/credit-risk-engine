@@ -28,7 +28,6 @@ class TestCreateDerivedFeatures:
             "loan_int_rate": 11.5,
             "loan_percent_income": 0.1,
             "cb_person_default_on_file": 0,
-            "cb_person_cred_hist_length": 8,
         }
 
     def test_minimum_age_lands_in_first_bucket(self, raw_row):
@@ -97,7 +96,6 @@ class TestDataValidation:
             "loan_int_rate": 11.5,
             "loan_percent_income": 0.1,
             "cb_person_default_on_file": 0,
-            "cb_person_cred_hist_length": 8,
         }
 
     def test_valid_data_passes_validation(self, preprocessor, valid_data):
@@ -192,7 +190,7 @@ class TestTransformedFeatureNames:
             """A transformer that can transform but cannot name its output."""
 
             def transform(self, X):
-                return np.zeros((len(X), 41))
+                return np.zeros((len(X), 40))
 
         def load_nameless(filename):
             if "preprocessor" in str(filename):
@@ -210,7 +208,7 @@ class TestTransformedFeatureNames:
         preprocessor = DataPreprocessor(PREPROCESSOR_PATH, FEATURE_NAMES_PATH)
         names = preprocessor._transformed_names
 
-        assert len(names) == 41
+        assert len(names) == 40
         # Categories come out alphabetically, not in the order they are listed
         # in VALID_HOME_OWNERSHIP.
         assert [n for n in names if n.startswith("person_home_ownership_")] == [
@@ -250,7 +248,6 @@ class TestPreprocessing:
             "loan_int_rate": 11.5,
             "loan_percent_income": 0.1,
             "cb_person_default_on_file": 0,
-            "cb_person_cred_hist_length": 8,
         }
 
     def test_preprocess_valid_data(self, preprocessor, valid_data):

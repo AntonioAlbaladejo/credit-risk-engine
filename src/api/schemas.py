@@ -81,9 +81,12 @@ class LoanApplication(BaseModel):
     cb_person_default_on_file: int = Field(
         ..., ge=0, le=1, description="Historical default record"
     )
-    cb_person_cred_hist_length: int = Field(
-        ..., ge=0, description="Years of credit history"
-    )
+
+    # cb_person_cred_hist_length used to be required here. It never reached the
+    # model -- it correlates 0.878 with person_age and the correlation filter
+    # dropped it on every training run -- so callers were made to supply a value
+    # that was always discarded. Clients still sending it are unaffected:
+    # Pydantic ignores unknown fields.
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -98,7 +101,6 @@ class LoanApplication(BaseModel):
                 "loan_int_rate": 11.5,
                 "loan_percent_income": 0.1,
                 "cb_person_default_on_file": 0,
-                "cb_person_cred_hist_length": 8,
             }
         }
     )

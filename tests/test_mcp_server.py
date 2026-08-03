@@ -49,7 +49,6 @@ APPLICATION = {
     "loan_int_rate": 16.02,
     "loan_percent_income": 0.24,
     "cb_person_default_on_file": 0,
-    "cb_person_cred_hist_length": 7,
 }
 
 

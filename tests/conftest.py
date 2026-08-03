@@ -5,6 +5,79 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
+# The columns the fitted ColumnTransformer emits, in its order, and the subset
+# the promoted bundle selects. Kept in step with models/*.joblib by
+# tests/test_inference_real.py, which loads the real artifacts and compares.
+ENCODED_FEATURES = [
+    "person_age",
+    "person_income",
+    "person_emp_length",
+    "loan_amnt",
+    "loan_int_rate",
+    "loan_percent_income",
+    "loan_to_income",
+    "employ_to_age",
+    "default_flag",
+    "person_home_ownership_MORTGAGE",
+    "person_home_ownership_OTHER",
+    "person_home_ownership_OWN",
+    "person_home_ownership_RENT",
+    "loan_intent_DEBTCONSOLIDATION",
+    "loan_intent_EDUCATION",
+    "loan_intent_HOMEIMPROVEMENT",
+    "loan_intent_MEDICAL",
+    "loan_intent_PERSONAL",
+    "loan_intent_VENTURE",
+    "loan_grade_A",
+    "loan_grade_B",
+    "loan_grade_C",
+    "loan_grade_D",
+    "loan_grade_E",
+    "loan_grade_F",
+    "loan_grade_G",
+    "cb_person_default_on_file_N",
+    "cb_person_default_on_file_Y",
+    "age_bucket_18-24",
+    "age_bucket_25-34",
+    "age_bucket_35-44",
+    "age_bucket_45-54",
+    "age_bucket_55-64",
+    "age_bucket_65+",
+    "emp_length_bin_0",
+    "emp_length_bin_1",
+    "emp_length_bin_10+",
+    "emp_length_bin_2-3",
+    "emp_length_bin_4-5",
+    "emp_length_bin_6-10",
+]
+
+SELECTED_FEATURES = [
+    "person_age",
+    "person_income",
+    "person_emp_length",
+    "loan_amnt",
+    "loan_int_rate",
+    "loan_percent_income",
+    "default_flag",
+    "person_home_ownership_MORTGAGE",
+    "person_home_ownership_OTHER",
+    "person_home_ownership_OWN",
+    "person_home_ownership_RENT",
+    "loan_intent_DEBTCONSOLIDATION",
+    "loan_intent_EDUCATION",
+    "loan_intent_HOMEIMPROVEMENT",
+    "loan_intent_MEDICAL",
+    "loan_intent_PERSONAL",
+    "loan_intent_VENTURE",
+    "loan_grade_A",
+    "loan_grade_B",
+    "loan_grade_C",
+    "loan_grade_D",
+    "loan_grade_E",
+    "loan_grade_F",
+    "loan_grade_G",
+]
+
 
 # Mock the model loading to avoid numpy._core import issues
 @pytest.fixture(autouse=True)
@@ -43,94 +116,26 @@ def mock_model_loading(request, monkeypatch):
         elif "threshold" in filename_str:
             return 0.5  # Default threshold
         elif "feature_names" in filename_str:
-            # These are the 17 features that the model was trained on
-            return [
-                "loan_percent_income",
-                "person_income",
-                "loan_int_rate",
-                "loan_amnt",
-                "loan_grade_D",
-                "person_home_ownership_MORTGAGE",
-                "person_age",
-                "person_emp_length",
-                "person_home_ownership_OWN",
-                "loan_intent_DEBTCONSOLIDATION",
-                "loan_intent_MEDICAL",
-                "loan_grade_E",
-                "loan_grade_C",
-                "default_flag",
-                "loan_intent_HOMEIMPROVEMENT",
-                "loan_grade_A",
-                "loan_intent_EDUCATION",
-            ]
+            # The features the promoted bundle selects, in its order.
+            return SELECTED_FEATURES
         elif "preprocessor" in filename_str:
             # Return a mock preprocessor
             mock_preprocessor = Mock()
 
-            def mock_fit_transform(X):
-                """Mock fit_transform"""
-                return np.random.randn(
-                    len(X) if isinstance(X, list) else X.shape[0], 41
-                )
-
             def mock_transform(X):
-                """Mock transform"""
-                return np.random.randn(
-                    len(X) if isinstance(X, list) else X.shape[0], 41
-                )
-
-            # All 41 features that come out of the ColumnTransformer
-            all_features_41 = [
-                # Numeric features (10 total)
-                "person_age",
-                "person_income",
-                "person_emp_length",
-                "loan_amnt",
-                "loan_int_rate",
-                "loan_percent_income",
-                "cb_person_cred_hist_length",
-                "loan_to_income",
-                "employ_to_age",
-                "default_flag",
-                # Categorical features (31 total)
-                "person_home_ownership_RENT",
-                "person_home_ownership_OWN",
-                "person_home_ownership_MORTGAGE",
-                "person_home_ownership_OTHER",
-                "loan_intent_PERSONAL",
-                "loan_intent_EDUCATION",
-                "loan_intent_MEDICAL",
-                "loan_intent_VENTURE",
-                "loan_intent_HOMEIMPROVEMENT",
-                "loan_intent_DEBTCONSOLIDATION",
-                "loan_grade_A",
-                "loan_grade_B",
-                "loan_grade_C",
-                "loan_grade_D",
-                "loan_grade_E",
-                "loan_grade_F",
-                "loan_grade_G",
-                "cb_person_default_on_file_0",
-                "cb_person_default_on_file_1",
-                "age_bucket_18-24",
-                "age_bucket_25-34",
-                "age_bucket_35-44",
-                "age_bucket_45-54",
-                "age_bucket_55-64",
-                "age_bucket_65+",
-                "emp_length_bin_0",
-                "emp_length_bin_1",
-                "emp_length_bin_2-3",
-                "emp_length_bin_4-5",
-                "emp_length_bin_6-10",
-                "emp_length_bin_10+",
-            ]
+                """Mock transform: right shape, meaningless values"""
+                rows = len(X) if isinstance(X, list) else X.shape[0]
+                return np.random.randn(rows, len(ENCODED_FEATURES))
 
             def mock_get_feature_names_out():
-                """Return the 41 feature names"""
-                return all_features_41
+                """The columns transform() returns, in order.
 
-            mock_preprocessor.fit_transform = mock_fit_transform
+                Unprefixed: the num__/cat__ stripping is pinned against the real
+                encoder in test_preprocessing.py, not faked here.
+                """
+                return ENCODED_FEATURES
+
+            mock_preprocessor.fit_transform = mock_transform
             mock_preprocessor.transform = mock_transform
             mock_preprocessor.get_feature_names_out = mock_get_feature_names_out
             return mock_preprocessor
@@ -154,7 +159,6 @@ def valid_application():
         "loan_int_rate": 11.5,
         "loan_percent_income": 0.1,
         "cb_person_default_on_file": 0,
-        "cb_person_cred_hist_length": 8,
     }
 
 
@@ -172,5 +176,4 @@ def valid_data():
         "loan_int_rate": 11.5,
         "loan_percent_income": 0.1,
         "cb_person_default_on_file": 0,
-        "cb_person_cred_hist_length": 8,
     }

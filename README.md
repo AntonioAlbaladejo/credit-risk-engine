@@ -16,8 +16,8 @@ Given a loan application — income, employment, home ownership, requested amoun
 credit history — the service returns the probability of default, a binary decision at a tuned
 threshold, and the threshold it used.
 
-Trained on 31,679 historical applications at a 21.5% default rate, it reaches **0.9460 ROC-AUC** and
-**0.9019 PR-AUC** on a held-out test split at an expected calibration error of **0.0076** — close
+Trained on 31,679 historical applications at a 21.5% default rate, it reaches **0.9495 ROC-AUC** and
+**0.9051 PR-AUC** on a held-out test split at an expected calibration error of **0.0082** — close
 enough to read the output as a real probability rather than an arbitrary score. That is the point of
 the design: a calibrated score can be repriced, turned into expected loss, or moved to a different
 operating point without retraining. A binary yes/no cannot.
@@ -28,30 +28,30 @@ operating point without retraining. A binary yes/no cannot.
 
 Measured on the 6,336-row test split, held out from every `fit` call and from the threshold search.
 Seed `42` throughout. XGBoost, `max_depth=4`, `n_estimators=300`, no class weighting, threshold 0.39,
-18 features.
+24 features.
 
 | ROC-AUC | PR-AUC | Brier ↓ | Calibration error ↓ | Recall | Precision | F1 |
 |---|---|---|---|---|---|---|
-| **0.9460** | **0.9019** | **0.0520** | **0.0076** | 0.7553 | 0.9313 | 0.8341 |
+| **0.9495** | **0.9051** | **0.0516** | **0.0082** | 0.7560 | 0.9348 | 0.8360 |
 
-At the tuned threshold the model catches 75.5% of real defaults, and 93.1% of the applications it
-rejects would have defaulted. Mean predicted probability is 0.2159 against an observed rate of
+At the tuned threshold the model catches 75.6% of real defaults, and 93.5% of the applications it
+rejects would have defaulted. Mean predicted probability is 0.2153 against an observed rate of
 0.2154.
 
 ### Model selection
 
-Four algorithms under an identical pipeline — same split, same preprocessor, same 18 features, no
+Four algorithms under an identical pipeline — same split, same preprocessor, same 24 features, no
 imbalance handling anywhere — so the only variable between rows is the algorithm.
 
 | Model | ROC-AUC | PR-AUC | Brier ↓ | Precision | Recall | F1 |
 |---|---|---|---|---|---|---|
-| Logistic Regression | 0.8722 | 0.7325 | 0.1005 | 0.6605 | 0.7026 | 0.6809 |
-| Random Forest | 0.9309 | 0.8823 | 0.0568 | 0.9256 | 0.7473 | 0.8269 |
-| **XGBoost** | **0.9460** | **0.9019** | **0.0520** | **0.9313** | **0.7553** | **0.8341** |
-| SVM (RBF) | 0.9012 | 0.8415 | 0.0711 | 0.8524 | 0.7026 | 0.7703 |
+| Logistic Regression | 0.8750 | 0.7398 | 0.0986 | 0.6771 | 0.6960 | 0.6864 |
+| Random Forest | 0.9315 | 0.8843 | 0.0565 | 0.9416 | 0.7436 | 0.8309 |
+| **XGBoost** | **0.9495** | **0.9051** | **0.0516** | **0.9348** | **0.7560** | **0.8360** |
+| SVM (RBF) | 0.9041 | 0.8464 | 0.0693 | 0.8738 | 0.6952 | 0.7744 |
 
 XGBoost wins every column, so the choice hides no trade-off. Logistic regression is the informative
-loser: trailing by 7.4 ROC-AUC and 17 PR-AUC points says the boundary is genuinely non-linear —
+loser: trailing by 7.5 ROC-AUC and 17 PR-AUC points says the boundary is genuinely non-linear —
 grade, intent and home ownership interact with loan-to-income rather than adding up.
 
 Regenerate with `uv run python scripts/train.py [--baselines]`, which writes
@@ -70,9 +70,9 @@ first.
 
 | Arm | ROC-AUC | PR-AUC | Brier ↓ | Mean predicted | Threshold |
 |---|---|---|---|---|---|
-| Old pipeline: leaky + weighted | 0.9447 | 0.9001 | 0.0696 | 0.3063 | 0.71 |
-| Clean split + weighted | 0.9455 | 0.9013 | 0.0683 | 0.3046 | 0.69 |
-| **Clean split, unweighted** (shipped) | **0.9460** | **0.9019** | **0.0520** | **0.2159** | 0.39 |
+| Old pipeline: leaky + weighted | 0.9492 | 0.9046 | 0.0682 | 0.3035 | 0.70 |
+| Clean split + weighted | 0.9492 | 0.9046 | 0.0682 | 0.3035 | 0.70 |
+| **Clean split, unweighted** (shipped) | **0.9495** | **0.9051** | **0.0516** | **0.2153** | 0.39 |
 
 ![Brier score across the three arms, compared in MLflow](assets/mlflow_brier_comparison.png)
 
@@ -94,9 +94,9 @@ benefit oversampling promises is what threshold tuning already delivers.
 
 Class weighting was then dropped for calibration. Both curves come from the same algorithm, features
 and split; only `scale_pos_weight` differs. The weighted model systematically over-predicts risk —
-calibration error 0.0903 against 0.0076 — and buys +0.0005 ROC-AUC for it, which is noise. It pushes
-mean predicted probability to 0.3046 against a true rate of 0.2154, dragging the optimal threshold to
-0.69. Unweighted, no decile deviates more than 1.6 points and Brier improves by 24%.
+calibration error 0.0893 against 0.0082 — and gives up 0.0003 ROC-AUC for it. It pushes mean
+predicted probability to 0.3035 against a true rate of 0.2154, dragging the optimal threshold to
+0.70. Unweighted, no decile deviates more than 2.5 points and Brier improves by 24%.
 
 ### The threshold is a tuned artifact, not 0.5
 
@@ -190,13 +190,13 @@ curl -X POST http://localhost:8000/predict \
   -d '{"person_age": 23, "person_income": 24000, "person_home_ownership": "RENT",
        "person_emp_length": 1, "loan_intent": "DEBTCONSOLIDATION", "loan_grade": "E",
        "loan_amnt": 12000, "loan_int_rate": 16.0, "loan_percent_income": 0.5,
-       "cb_person_default_on_file": 1, "cb_person_cred_hist_length": 3}'
+       "cb_person_default_on_file": 1}'
 ```
 
 ```json
 {
   "prediction": 1,
-  "probability_default": 0.9998610019683838,
+  "probability_default": 0.9998000264167786,
   "risk_level": "high_risk",
   "threshold_used": 0.39,
   "recommendation": "Reject application"
@@ -208,7 +208,7 @@ predictions and becomes healthy in about 8 seconds.
 
 ```bash
 docker build -t credit-risk-engine:local . && docker run --rm -p 8000:8000 credit-risk-engine:local
-uv run pytest                                           # 97 tests, ~3.5s
+uv run pytest                                           # 117 tests, ~4.5s
 uv run python scripts/train.py --baselines              # reproduce the comparison tables
 uv run python scripts/train.py --save clean-unweighted  # promote a run to models/
 ```
@@ -220,7 +220,7 @@ uv run python scripts/train.py --save clean-unweighted  # promote a run to model
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET` | `/health` | `200` when the model is loaded, `503` when it is not |
-| `GET` | `/model/info` | Model type, threshold, and the 18 feature names in order |
+| `GET` | `/model/info` | Model type, threshold, and the 24 feature names in order |
 | `POST` | `/predict` | Score one application |
 | `POST` | `/predict/batch` | Score up to 100 applications in one call |
 | `GET` | `/docs` · `/redoc` | OpenAPI documentation |
@@ -252,16 +252,17 @@ status code, not a payload.
 
 The [Credit Risk Dataset](https://www.kaggle.com/datasets/laotse/credit-risk-dataset) from Kaggle:
 32,581 loan applications, 11 features, binary `loan_status` target. Cleaning leaves **31,679 rows at
-a 21.5% default rate** (3.64:1). Feature engineering adds five derived columns, expanding to 41 after
+a 21.5% default rate** (3.64:1). Feature engineering adds five derived columns, expanding to 40 after
 one-hot encoding; a three-stage filter (correlation, tree importance, variance) fitted on the
-training split alone reduces that to the **18 features** the model uses. Raw data is not committed.
+training split alone reduces that to 18, and one-hot blocks left partially selected are then restored
+whole, giving the **24 features** the model uses. Raw data is not committed.
 
 ---
 
 ## Limitations and open work
 
 - **Most of the suite mocks `joblib.load` with an autouse fixture**, so it exercises the code paths
-  rather than the shipped model. `tests/test_inference_real.py` opts out of that mock and pins five
+  rather than the shipped model. `tests/test_inference_real.py` opts out of that mock and pins six
   known applications to the probabilities the real bundle assigns them, which is what catches a
   reordered feature list or a preprocessor from a different run; the rest still proves nothing about
   the artifacts.

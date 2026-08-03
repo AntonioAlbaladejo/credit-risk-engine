@@ -67,9 +67,8 @@ CASES = [
             "loan_int_rate": 16.02,
             "loan_percent_income": 0.24,
             "cb_person_default_on_file": 0,
-            "cb_person_cred_hist_length": 7,
         },
-        "expected": 0.010012,
+        "expected": 0.005599,
         "actual": 0,
     },
     {
@@ -85,9 +84,8 @@ CASES = [
             "loan_int_rate": 14.65,
             "loan_percent_income": 0.13,
             "cb_person_default_on_file": 0,
-            "cb_person_cred_hist_length": 6,
         },
-        "expected": 0.149956,
+        "expected": 0.176354,
         "actual": 0,
     },
     {
@@ -103,9 +101,8 @@ CASES = [
             "loan_int_rate": 13.48,
             "loan_percent_income": 0.48,
             "cb_person_default_on_file": 1,
-            "cb_person_cred_hist_length": 6,
         },
-        "expected": 0.350547,
+        "expected": 0.365252,
         "actual": 0,
     },
     {
@@ -121,9 +118,8 @@ CASES = [
             "loan_int_rate": 14.42,
             "loan_percent_income": 0.05,
             "cb_person_default_on_file": 1,
-            "cb_person_cred_hist_length": 6,
         },
-        "expected": 0.549971,
+        "expected": 0.573968,
         "actual": 1,
     },
     {
@@ -139,15 +135,35 @@ CASES = [
             "loan_int_rate": 15.37,
             "loan_percent_income": 0.11,
             "cb_person_default_on_file": 0,
-            "cb_person_cred_hist_length": 4,
         },
-        "expected": 0.950113,
+        "expected": 0.950414,
+        "actual": 1,
+    },
+    {
+        # Grade G, the rarest and riskiest grade: 64 rows in the whole dataset,
+        # 13 in this split. It also carries a VENTURE intent and RENT ownership,
+        # so it exercises the three one-hot blocks that a per-column filter used
+        # to leave incomplete.
+        "row": 6191,
+        "application": {
+            "person_age": 23,
+            "person_income": 34255,
+            "person_home_ownership": "RENT",
+            "person_emp_length": 7.0,
+            "loan_intent": "VENTURE",
+            "loan_grade": "G",
+            "loan_amnt": 6000,
+            "loan_int_rate": 22.11,
+            "loan_percent_income": 0.18,
+            "cb_person_default_on_file": 1,
+        },
+        "expected": 0.956337,
         "actual": 1,
     },
 ]
 
 EXPECTED_THRESHOLD = 0.39
-EXPECTED_FEATURES = 18
+EXPECTED_FEATURES = 24
 
 # Loose enough for float noise across platforms, tight enough that any real
 # change in the chain -- a swapped feature, a different scaler -- blows past it.
@@ -174,6 +190,31 @@ def test_bundle_is_the_promoted_one(predictor):
     """
     assert predictor.threshold == pytest.approx(EXPECTED_THRESHOLD)
     assert len(predictor.feature_names) == EXPECTED_FEATURES
+
+
+def test_every_loan_grade_scores_differently(predictor):
+    """One application, seven grades, seven distinct probabilities.
+
+    B, F and G used to return the same number to ten decimals. The importance
+    filter dropped their three columns out of the seven-column one-hot block, so
+    all three became the same all-zeros pattern and fused into one category that
+    is 97% grade B -- meaning F (70.3% observed default rate) and G (98.4%) were
+    scored as if they were B (15.9%).
+
+    Nothing in the aggregate metrics moved: F and G together are 0.94% of the
+    dataset. Only a per-grade check like this one sees it.
+    """
+    application = dict(CASES[0]["application"])
+    scores = {
+        grade: predictor.predict(application | {"loan_grade": grade})[
+            "probability_default"
+        ]
+        for grade in "ABCDEFG"
+    }
+
+    assert len(set(scores.values())) == 7, f"grades share a score: {scores}"
+    # The riskiest grade must outrank the safest; the middle is the model's call.
+    assert scores["G"] > scores["A"]
 
 
 def test_model_carries_the_hyperparameters_train_py_documents(predictor):

@@ -29,13 +29,23 @@ logger = logging.getLogger(__name__)
 
 REASON_GROUPS: dict[str, tuple[str, ...]] = {
     "affordability": ("person_income", "loan_amnt", "loan_percent_income"),
-    "loan_grade": ("loan_grade_A", "loan_grade_C", "loan_grade_D", "loan_grade_E"),
+    "loan_grade": (
+        "loan_grade_A",
+        "loan_grade_B",
+        "loan_grade_C",
+        "loan_grade_D",
+        "loan_grade_E",
+        "loan_grade_F",
+        "loan_grade_G",
+    ),
     "interest_rate": ("loan_int_rate",),
     "stability": (
         "person_emp_length",
         "person_age",
         "person_home_ownership_MORTGAGE",
+        "person_home_ownership_OTHER",
         "person_home_ownership_OWN",
+        "person_home_ownership_RENT",
     ),
     "loan_purpose": (
         "loan_intent_DEBTCONSOLIDATION",
@@ -43,6 +53,7 @@ REASON_GROUPS: dict[str, tuple[str, ...]] = {
         "loan_intent_HOMEIMPROVEMENT",
         "loan_intent_MEDICAL",
         "loan_intent_PERSONAL",
+        "loan_intent_VENTURE",
     ),
     "credit_history": ("default_flag",),
 }
@@ -79,7 +90,7 @@ class RiskExplainer:
         self.feature_names = list(predictor.feature_names)
 
         # A retrain that changes the feature list must fail here rather than
-        # silently explaining 17 of 18 features.
+        # silently leaving one of them out of every explanation.
         grouped = [name for names in REASON_GROUPS.values() for name in names]
         missing = set(self.feature_names) - set(grouped)
         unknown = set(grouped) - set(self.feature_names)

@@ -55,7 +55,6 @@ class TestLoanApplicationSchema:
             "loan_int_rate": 11.5,
             "loan_percent_income": 0.1,
             "cb_person_default_on_file": 0,
-            "cb_person_cred_hist_length": 8,
         }
 
     def test_valid_application(self, valid_application):
@@ -190,7 +189,6 @@ class TestBatchPredictionRequest:
             "loan_int_rate": 11.5,
             "loan_percent_income": 0.1,
             "cb_person_default_on_file": 0,
-            "cb_person_cred_hist_length": 8,
         }
 
     def test_valid_batch_request(self, valid_application):
