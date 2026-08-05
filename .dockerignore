@@ -39,7 +39,6 @@ scripts/
 .coverage
 coverage.xml
 .ruff_cache
-requirements.txt.bak
 
 # MLflow local tracking store and artifacts
 mlruns/
