@@ -203,8 +203,9 @@ curl -X POST http://localhost:8000/predict \
 }
 ```
 
-The Docker image carries the model artifacts, so a fresh clone builds a container that serves real
-predictions and becomes healthy in about 8 seconds.
+The 440 MB Docker image carries the model artifacts, so a fresh clone builds a container that serves
+real predictions and becomes healthy in about 5 seconds. Training tools — MLflow, Evidently, seaborn
+— and the CUDA build of XGBoost are dev-only dependencies, and none of them reach the runtime layer.
 
 ```bash
 docker build -t credit-risk-engine:local . && docker run --rm -p 8000:8000 credit-risk-engine:local
@@ -266,8 +267,9 @@ whole, giving the **24 features** the model uses. Raw data is not committed.
   known applications to the probabilities the real bundle assigns them, which is what catches a
   reordered feature list or a preprocessor from a different run; the rest still proves nothing about
   the artifacts.
-- **The container is 2.94 GB**, down from 4.08 GB, dominated by `mlflow`, `evidently`, `seaborn` and
-  an unused CUDA library in the runtime dependency set.
+- **Grade F is still under-predicted** by 0.068 on the 51 test rows that carry it. Restoring the
+  one-hot block stopped F and G from being scored as B, but 7 sparse dummies share no strength
+  between neighbouring grades; an ordinal encoding with `monotone_constraints` is the follow-up.
 - **CORS is wide open** (`allow_origins=["*"]`) and the Evidently report compares against a
   three-row hand-written reference file, so its drift numbers are not meaningful yet.
 
