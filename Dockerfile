@@ -35,7 +35,10 @@ COPY --chown=appuser:appgroup . .
 
 USER appuser
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+# start-period covers the slowest observed cold start: 13 s on 0.5 vCPU, which is
+# what the Fargate task is sized at. Below that the first probes fail and the
+# task can be replaced while it is still loading the model.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 EXPOSE 8000
