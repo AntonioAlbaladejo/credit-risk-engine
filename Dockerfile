@@ -36,8 +36,8 @@ COPY --chown=appuser:appgroup . .
 USER appuser
 
 # start-period covers the slowest observed cold start: 13 s on 0.5 vCPU, which is
-# what the Fargate task is sized at. Below that the first probes fail and the
-# task can be replaced while it is still loading the model.
+# how the Fargate task is sized. This governs `docker run`; ECS reads the
+# healthCheck block of the task definition instead, and that lives in AWS.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
