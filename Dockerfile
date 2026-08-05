@@ -1,5 +1,5 @@
 #########################################################
-FROM python:3.11.10-slim as builder
+FROM python:3.11.10-slim AS builder
 
 WORKDIR /build
 
@@ -14,11 +14,10 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
 #########################################################
-FROM python:3.11.10-slim as runtime
+FROM python:3.11.10-slim AS runtime
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-ENV PORT=8000
 
 WORKDIR /app
 
@@ -26,13 +25,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 
 RUN groupadd -r appgroup && useradd -r -g appgroup appuser
 
-COPY --from=builder /build/.venv /app/.venv
+COPY --from=builder --chown=appuser:appgroup /build/.venv /app/.venv
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-RUN chown -R appuser:appgroup /app
-
-COPY . .
+# Ownership is set by each COPY. A `RUN chown -R /app` afterwards would work too,
+# but it rewrites every file into a new layer -- 300 MB of venv duplicated.
+COPY --chown=appuser:appgroup . .
 
 USER appuser
 
