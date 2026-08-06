@@ -4,6 +4,7 @@ from enum import Enum
 
 from fastapi import FastAPI, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from src.api.schemas import (
     BatchPredictionRequest,
@@ -30,9 +31,18 @@ logging.basicConfig(level=LOG_LEVEL)
 logger = logging.getLogger(__name__)
 
 
-def _dump_model(model) -> dict:
-    data = model.model_dump() if hasattr(model, "model_dump") else model.dict()
-    return {k: v.value if isinstance(v, Enum) else v for k, v in data.items()}
+def _dump_model(model: BaseModel) -> dict:
+    """Flatten a request model to the raw dict the preprocessor expects.
+
+    Args:
+        model: A validated Pydantic model.
+
+    Returns:
+        Its fields, with enum members replaced by their values.
+    """
+    return {
+        k: v.value if isinstance(v, Enum) else v for k, v in model.model_dump().items()
+    }
 
 
 @asynccontextmanager
@@ -71,7 +81,7 @@ app.add_middleware(
 )
 
 # Load model and preprocessor at startup
-_predictor: CreditRiskPredictor = None
+_predictor: CreditRiskPredictor | None = None
 
 
 def get_predictor() -> CreditRiskPredictor:
@@ -152,7 +162,6 @@ async def predict(application: LoanApplication):
     """
     try:
         predictor = get_predictor()
-        # Handle both Pydantic v1 and v2 - use model_dump() for v2, dict() for v1
         features = _dump_model(application)
         prediction = predictor.predict(features)
         return PredictionResponse(**prediction)
@@ -177,7 +186,6 @@ async def predict_batch(request: BatchPredictionRequest):
     """
     try:
         predictor = get_predictor()
-        # Handle both Pydantic v1 and v2 - use model_dump() for v2, dict() for v1
         features_list = [_dump_model(app) for app in request.applications]
         predictions = predictor.batch_predict(features_list)
 
