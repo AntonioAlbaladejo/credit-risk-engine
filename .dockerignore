@@ -16,6 +16,8 @@ build/
 # Development
 .vscode
 .claude
+.mcp.json
+.benchmarks/
 .env
 .env.local
 venv/
