@@ -215,6 +215,11 @@ data/*.parquet
 data/*.sql
 data/*.zip
 
+# Corpus normativo: el JSONL troceado sí se versiona (es la entrada de la
+# recuperación y hace falta sin red); el HTML de origen no, porque lo vuelve a
+# descargar scripts/ingest_corpus.py cuando falta.
+corpus/raw/
+
 # Modelos entrenados (Los archivos binarios de ML son pesados)
 models/*.pkl
 models/*.joblib

@@ -6,6 +6,13 @@ BASE_DIR = Path(__file__).parent.parent
 MODELS_DIR = BASE_DIR / "models"
 DATA_DIR = BASE_DIR / "data"
 
+# Retrieval corpus (regulatory text). Deliberately outside data/, which holds
+# training data and is never committed: this corpus is an input to retrieval,
+# not to training, and nothing is fitted on it.
+CORPUS_DIR = BASE_DIR / "corpus"
+CORPUS_RAW_DIR = CORPUS_DIR / "raw"
+CORPUS_PATH = CORPUS_DIR / "eu_regulation.jsonl"
+
 # Model paths
 MODEL_PATH = MODELS_DIR / "best_tuned_model_xgboost.joblib"
 THRESHOLD_PATH = MODELS_DIR / "optimal_threshold.joblib"
