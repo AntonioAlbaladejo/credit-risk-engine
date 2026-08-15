@@ -203,7 +203,7 @@ curl -X POST http://localhost:8000/predict \
 }
 ```
 
-The 440 MB Docker image carries the model artifacts, so a fresh clone builds a container that serves
+The 442 MB Docker image carries the model artifacts, so a fresh clone builds a container that serves
 real predictions and becomes healthy in about 5 seconds. Training tools — MLflow, Evidently, seaborn
 — and the CUDA build of XGBoost are dev-only dependencies, and none of them reach the runtime layer.
 

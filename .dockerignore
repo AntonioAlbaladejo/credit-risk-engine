@@ -32,6 +32,11 @@ notebooks/
 data/
 results/
 
+# Source HTML for the regulatory corpus: reingestion material, and untracked,
+# so leaving it in would make the image size depend on the developer's disk.
+# The chunked JSONL stays in: retrieval will read it from the service.
+corpus/raw/
+
 # Tests, docs and CI config (not needed at runtime)
 tests/
 docs/
