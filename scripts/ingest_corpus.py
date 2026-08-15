@@ -62,6 +62,23 @@ HEADING_P = re.compile(r'<p[^>]*class="oj-sti-art"[^>]*>(.*?)</p>', re.S)
 FOOTNOTE = re.compile(r'<span[^>]*class="oj-super[^"]*"[^>]*>.*?</span>', re.S)
 TAG = re.compile(r"<[^>]+>")
 
+# Most retrieval embedding models are BERT-based and read at most 512 tokens;
+# anything past that is dropped from the vector while still sitting in the text,
+# so the passage stays searchable only up to its cut. 350 words is roughly 455
+# tokens, which leaves margin for a tokenizer that splits legal terms finely.
+WORD_BUDGET = 350
+
+# Numbered paragraphs inside an article: `<div id="013.002">` is Article 13(2).
+SUBPARA_DIV = re.compile(r'<div id="\d{3}\.(?P<paragraph>\d{3})">')
+# Where a unit may be cut when it has no numbered paragraphs: after a period,
+# semicolon or colon, before a capital or an opening bracket. Semicolons matter
+# because definitions, prohibitions and task lists are enumerations -- their
+# items end in ";" and open with "(1)" or "(a)", so a sentence-only rule finds
+# no boundary at all and leaves them whole. Cross-references stay safe: nothing
+# separates "Article 6" from "(2)". Crude, but a wrong break costs a chunk
+# boundary in mid-sentence, never a lost or misattributed citation.
+SEGMENT_BREAK = re.compile(r"(?<=[.;:])\s+(?=[A-Z(])")
+
 
 def to_text(fragment: str) -> str:
     """Strip markup from an HTML fragment and collapse its whitespace.
@@ -78,8 +95,107 @@ def to_text(fragment: str) -> str:
     return re.sub(r"\s+", " ", plain).strip()
 
 
+def segment(fragment: str) -> list[tuple[str, str]]:
+    """Split one unit into its smallest natural pieces.
+
+    Numbered paragraphs are the act's own subdivision, so they win when they
+    exist. Definitions articles, annexes and long recitals carry none; those
+    fall back to whole-unit text, which `fit` then breaks by sentence.
+
+    Args:
+        fragment: The unit's HTML, titles already removed.
+
+    Returns:
+        (paragraph number, text) pairs; the number is "" when the text belongs
+        to no numbered paragraph.
+    """
+    starts = list(SUBPARA_DIV.finditer(fragment))
+    if not starts:
+        return [("", to_text(fragment))]
+
+    segments = []
+    # Annexes and some articles open with text before the first numbered
+    # point. It belongs to the unit, not to any one paragraph.
+    lead = to_text(fragment[: starts[0].start()])
+    if lead:
+        segments.append(("", lead))
+    for index, start in enumerate(starts):
+        end = starts[index + 1].start() if index + 1 < len(starts) else len(fragment)
+        number = str(int(start.group("paragraph")))
+        segments.append((number, to_text(fragment[start.start() : end])))
+    return [(number, text) for number, text in segments if text]
+
+
+def fit(text: str, budget: int) -> list[str]:
+    """Break one segment into sentence groups of at most `budget` words.
+
+    Args:
+        text: A single segment.
+        budget: Word ceiling per group.
+
+    Returns:
+        The segment unchanged when it already fits, else its sentence groups.
+    """
+    if len(text.split()) <= budget:
+        return [text]
+
+    groups: list[str] = []
+    current: list[str] = []
+    size = 0
+    for sentence in SEGMENT_BREAK.split(text):
+        length = len(sentence.split())
+        if current and size + length > budget:
+            groups.append(" ".join(current))
+            current, size = [], 0
+        current.append(sentence)
+        size += length
+    if current:
+        groups.append(" ".join(current))
+    return groups
+
+
+def pack(segments: list[tuple[str, str]], budget: int) -> list[tuple[str, str]]:
+    """Group consecutive segments into chunks of at most `budget` words.
+
+    Adjacent short paragraphs merge on purpose. A 12-word paragraph on its own
+    embeds into a vector that matches almost nothing, and mixing 12-word with
+    2,600-word chunks makes similarity scores incomparable across the corpus.
+
+    Args:
+        segments: Output of `segment`.
+        budget: Word ceiling per chunk.
+
+    Returns:
+        (paragraph label, text) per chunk; the label spans the paragraphs the
+        chunk covers ("2", "1-3", or "" when none are numbered).
+    """
+    chunks: list[list] = []
+    for number, text in segments:
+        for piece in fit(text, budget):
+            length = len(piece.split())
+            if chunks and chunks[-1][2] + length <= budget:
+                chunks[-1][0].append(number)
+                chunks[-1][1].append(piece)
+                chunks[-1][2] += length
+            else:
+                chunks.append([[number], [piece], length])
+
+    packed = []
+    for numbers, texts, _ in chunks:
+        numbered = [number for number in numbers if number]
+        label = ""
+        if numbered:
+            first, last = numbered[0], numbered[-1]
+            label = first if first == last else f"{first}-{last}"
+        packed.append((label, " ".join(texts)))
+    return packed
+
+
 def split_units(page: str, doc: dict, retrieved_on: str) -> list[dict]:
-    """Split one act into one chunk per article, recital and annex.
+    """Split one act into citable chunks of at most WORD_BUDGET words.
+
+    Every article, recital and annex yields at least one chunk; long ones yield
+    several, cut at their own paragraph boundaries.
 
     Args:
         page: The act's EUR-Lex HTML.
@@ -108,36 +224,56 @@ def split_units(page: str, doc: dict, retrieved_on: str) -> list[dict]:
         headings = [to_text(heading) for heading in HEADING_P.findall(fragment)]
         ref = titles[0] if titles else f"Recital {number}"
         heading = next(iter(titles[1:] + headings), "")
-        citation = f"{doc['short']}, {ref}" + (f" - {heading}" if heading else "")
 
-        # Drop the title paragraphs from the body: they are already in the
+        # Drop the title paragraphs before segmenting: they are already in the
         # citation, and repeating them skews the embedding of short articles.
-        body = to_text(HEADING_P.sub(" ", TITLE_P.sub(" ", fragment)))
+        stripped = HEADING_P.sub(" ", TITLE_P.sub(" ", fragment))
 
-        chunks.append(
-            {
-                "chunk_id": f"{doc['doc_id']}:{anchor}",
-                "doc_id": doc["doc_id"],
-                "doc_title": doc["title"],
-                "jurisdiction": "EU",
-                "unit": UNIT_NAMES[kind],
-                "ref": ref,
-                "heading": heading,
-                "citation": citation,
-                # The citation leads the text on purpose: the embedding then
-                # carries the heading's wording, and a chunk handed to a model
-                # names its source without depending on metadata travelling
-                # alongside it.
-                "text": f"{citation}\n\n{body}",
-                "source_url": EURLEX_HTML.format(celex=doc["celex"]),
-                "retrieved_on": retrieved_on,
-            }
-        )
+        for part, (paragraph, body) in enumerate(
+            pack(segment(stripped), WORD_BUDGET), start=1
+        ):
+            # A chunk cites the paragraphs it actually covers, so a passage
+            # retrieved from Article 13 is quoted as Article 13(2), not as the
+            # whole article the reader would then have to search by hand.
+            cited = f"{ref}({paragraph})" if paragraph else ref
+            citation = f"{doc['short']}, {cited}" + (f" - {heading}" if heading else "")
+            chunks.append(
+                {
+                    # Parts are numbered even when a unit yields only one: the
+                    # budget is a tuning knob, so today's single chunk may split
+                    # tomorrow and ids must not silently change meaning.
+                    "chunk_id": f"{doc['doc_id']}:{anchor}#{part}",
+                    "doc_id": doc["doc_id"],
+                    "doc_title": doc["title"],
+                    "jurisdiction": "EU",
+                    "unit": UNIT_NAMES[kind],
+                    "ref": cited,
+                    "paragraph": paragraph,
+                    "heading": heading,
+                    "citation": citation,
+                    # The citation leads the text on purpose: the embedding
+                    # then carries the heading's wording, and a chunk handed to
+                    # a model names its source without depending on metadata
+                    # travelling alongside it.
+                    "text": f"{citation}\n\n{body}",
+                    "source_url": EURLEX_HTML.format(celex=doc["celex"]),
+                    "retrieved_on": retrieved_on,
+                }
+            )
     return chunks
 
 
 def fetch(doc: dict) -> tuple[str, str]:
-    """Return an act's HTML and the date it was downloaded, caching the file.
+    """Return an act's HTML and the date it was downloaded, caching both.
+
+    The date is written next to the HTML at download time rather than read back
+    from the file's mtime. A copy, a checkout or a stray `touch` rewrites an
+    mtime without changing a byte of text, and in a corpus whose whole purpose
+    is citation the consultation date is part of the citation: acts get amended,
+    so a citation with an unreliable date cannot be checked.
+
+    A cached act whose date file is missing counts as a cache miss and is
+    downloaded again -- half an entry is not an entry.
 
     Args:
         doc: An entry of SOURCES.
@@ -147,9 +283,11 @@ def fetch(doc: dict) -> tuple[str, str]:
 
     Raises:
         urllib.error.URLError: The act is not cached and EUR-Lex is unreachable.
+        ValueError: EUR-Lex answered without the ELI anchors the splitter needs.
     """
     raw_path = CORPUS_RAW_DIR / f"{doc['doc_id']}.html"
-    if not raw_path.exists():
+    stamp_path = raw_path.with_suffix(".json")
+    if not (raw_path.exists() and stamp_path.exists()):
         url = EURLEX_HTML.format(celex=doc["celex"])
         logger.info("Downloading %s from %s", doc["short"], url)
         request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
@@ -164,7 +302,11 @@ def fetch(doc: dict) -> tuple[str, str]:
                 "Nothing cached; re-run to retry."
             )
         raw_path.write_bytes(page)
-    downloaded = date.fromtimestamp(raw_path.stat().st_mtime).isoformat()
+        stamp_path.write_text(
+            json.dumps({"retrieved_on": date.today().isoformat(), "source_url": url}),
+            encoding="utf-8",
+        )
+    downloaded = json.loads(stamp_path.read_text(encoding="utf-8"))["retrieved_on"]
     return raw_path.read_text(encoding="utf-8"), downloaded
 
 

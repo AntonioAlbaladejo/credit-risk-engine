@@ -22,6 +22,7 @@ uv run ruff check --fix . && uv run ruff format .      # autofix before committi
 docker build -t credit-risk-engine:local . && docker run --rm -p 8000:8000 credit-risk-engine:local
 uv run mlflow ui --backend-store-uri sqlite:///mlflow.db   # local tracking UI (:5000)
 uv run python scripts/train.py [--baselines] [--save clean-unweighted]  # retrain / promote
+uv run python -m scripts.ingest_corpus   # rebuild corpus/ from EUR-Lex (cached in corpus/raw/)
 ```
 
 Always `uv run ...`; never `pip install` into the environment. A new dependency means editing
@@ -38,13 +39,13 @@ Always `uv run ...`; never `pip install` into the environment. A new dependency 
 | [src/mcp_server.py](src/mcp_server.py) | MCP tools over the bundle for LLM clients; needs the `genai` group |
 | [src/model_monitoring.py](src/model_monitoring.py) | Evidently drift/quality reports → `results/` |
 | [src/api/](src/api/) | FastAPI app + Pydantic request/response contracts |
-| [scripts/](scripts/) | `train.py` (the only writer of `models/`) · `plot_results.py` |
+| [scripts/](scripts/) | `train.py` (the only writer of `models/`) · `plot_results.py` · `ingest_corpus.py` |
 | [notebooks/](notebooks/) | ingestion → EDA → feature engineering → model selection (exploration only) |
 | [tests/](tests/) | pytest; `conftest.py` patches `joblib.load` via an **autouse** fixture |
 | [.github/workflows/](.github/workflows/) | `ci.yml` (ruff → pytest) · `cd.yml` (build → ECR → Fargate) |
 
-`models/`, `results/`, `data/` are generated. Only four `.joblib` artifacts are whitelisted in
-`.gitignore` because the Docker image needs them at build time.
+`models/`, `results/`, `data/` and `corpus/raw/` are generated. Only four `.joblib` artifacts are
+whitelisted in `.gitignore` because the Docker image needs them at build time.
 
 ## Default coding mode: ponytail
 
@@ -137,9 +138,9 @@ pre-convention history.
 
 - **Types:** `feat` · `fix` · `perf` · `refactor` · `test` · `docs` · `build` (deps, Dockerfile,
   `pyproject.toml`) · `ci` (workflows) · `chore` (tooling, `.gitignore`) · `revert`.
-- **Scopes:** `api`, `preprocessing`, `predictor`, `explainer`, `mcp`, `monitoring`, `config`,
-  `data`, `models`, `mlflow`, `sagemaker`, `notebooks`, `tests`, `docker`, `aws`, `deps`. Omit when
-  a change genuinely spans the repo; never invent a vague one like `misc`.
+- **Scopes:** `api`, `preprocessing`, `predictor`, `explainer`, `mcp`, `corpus`, `monitoring`,
+  `config`, `data`, `models`, `mlflow`, `sagemaker`, `notebooks`, `tests`, `docker`, `aws`, `deps`.
+  Omit when a change genuinely spans the repo; never invent a vague one like `misc`.
 - **Breaking** (API contract, artifact bundle format, deployment interface): `!` after the scope
   **and** a `BREAKING CHANGE:` footer with the migration.
 - **Body** whenever the *why* is not obvious from the diff: reason, consequence, trade-off,
