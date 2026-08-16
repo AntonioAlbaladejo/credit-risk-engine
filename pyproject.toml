@@ -3,7 +3,7 @@ name = "credit-risk-engine"
 version = "1.0.0"
 description = "A production-ready machine learning system to predict credit risk and loan default probability"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 license = {text = "MIT"}
 authors = [
     {name = "Antonio Albaladejo", email = "antonioalbaladejo98@gmail.com"},
@@ -73,6 +73,7 @@ dev = [
 ]
 genai = [
     "mcp>=2.0,<3",
+    "fastembed>=0.8,<0.9",
 ]
 
 [tool.pytest.ini_options]

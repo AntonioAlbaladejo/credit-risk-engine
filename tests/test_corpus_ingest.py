@@ -17,7 +17,14 @@ import json
 import pytest
 
 from scripts import ingest_corpus
-from scripts.ingest_corpus import SOURCES, WORD_BUDGET, fit, pack, split_units
+from scripts.ingest_corpus import (
+    SOURCES,
+    TOKEN_LIMIT,
+    count_words,
+    fit,
+    pack,
+    split_units,
+)
 from src.config import CORPUS_PATH
 
 # Trimmed to the shape the splitter reads: flat ELI anchors, an article with a
@@ -45,7 +52,7 @@ DOC = {"doc_id": "gdpr", "celex": "32016R0679", "short": "GDPR", "title": "GDPR"
 
 @pytest.fixture(scope="module")
 def parsed():
-    return split_units(FRAGMENT, DOC, "2026-08-06")
+    return split_units(FRAGMENT, DOC, "2026-08-06", count_words)
 
 
 def test_each_unit_becomes_at_least_one_numbered_part(parsed):
@@ -86,7 +93,7 @@ def test_entities_and_non_breaking_spaces_are_resolved(parsed):
 
 
 def test_fit_leaves_a_segment_that_already_fits():
-    assert fit("Short enough.", budget=50) == ["Short enough."]
+    assert fit("Short enough.", budget=50, measure=count_words) == ["Short enough."]
 
 
 def test_fit_splits_an_enumeration_at_its_semicolons():
@@ -98,7 +105,9 @@ def test_fit_splits_an_enumeration_at_its_semicolons():
     items = " ".join(
         f"({n}) the term number {n} means a defined thing;" for n in range(20)
     )
-    pieces = fit(f"For the purposes of this Regulation: {items}", budget=40)
+    pieces = fit(
+        f"For the purposes of this Regulation: {items}", budget=40, measure=count_words
+    )
     assert len(pieces) > 1
     assert all(len(piece.split()) <= 40 for piece in pieces)
 
@@ -122,7 +131,9 @@ def test_provenance_date_is_not_read_back_from_the_filesystem(tmp_path, monkeypa
 
 def test_pack_keeps_a_long_paragraph_out_of_its_neighbours_chunk():
     long_text = "word " * 60
-    packed = pack([("1", long_text.strip()), ("2", "short tail")], budget=50)
+    packed = pack(
+        [("1", long_text.strip()), ("2", "short tail")], budget=50, measure=count_words
+    )
     assert len(packed) > 1
     assert packed[-1] == ("2", "short tail")
 
@@ -167,22 +178,29 @@ def test_every_source_is_present(chunks):
 
 @corpus
 def test_no_chunk_overflows_the_embedding_window(chunks):
-    """The reason the budget exists.
+    """The reason the budget exists, checked with the tokenizer that will read it.
 
-    Retrieval models read 512 tokens; the tail of a longer chunk stays in the
-    text but never reaches the vector, so the passage is searchable only up to
-    its cut. Words are a proxy for tokens at roughly 1.3 to 1 in English legal
-    prose, which puts the ceiling near 390 words.
+    A chunk past the window keeps its tail in the text but never gets it into
+    the vector, so the passage is searchable only up to its cut and nothing
+    reports it. Skipped without the `genai` group, which is how CI installs.
     """
-    oversized = [c["chunk_id"] for c in chunks if len(c["text"].split()) * 1.3 > 512]
-    assert not oversized
+    pytest.importorskip(
+        "fastembed", reason="optional 'genai' dependency group not installed"
+    )
+    count = ingest_corpus.token_counter()
+    oversized = [(c["chunk_id"], count(c["text"])) for c in chunks]
+    assert [c for c in oversized if c[1] > TOKEN_LIMIT] == []
 
 
 @corpus
-def test_the_budget_is_what_shapes_the_corpus(chunks):
-    """A single unsplittable segment may exceed it, but nothing wildly so."""
-    longest = max(len(c["text"].split()) for c in chunks)
-    assert longest <= WORD_BUDGET * 1.1
+def test_no_chunk_is_wildly_oversized(chunks):
+    """Coarse guard that still runs where the tokenizer is unavailable.
+
+    Words underestimate tokens badly on legal references -- 2.14 per word at
+    worst against a 1.21 median -- so this only catches gross regressions. The
+    exact check is the case above.
+    """
+    assert max(len(c["text"].split()) for c in chunks) <= TOKEN_LIMIT
 
 
 @corpus

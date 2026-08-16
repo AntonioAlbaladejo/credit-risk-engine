@@ -22,7 +22,16 @@ import re
 import urllib.request
 from datetime import date
 
-from src.config import CORPUS_PATH, CORPUS_RAW_DIR, LOG_LEVEL
+import numpy as np
+
+from src.config import (
+    CORPUS_INDEX_PATH,
+    CORPUS_PATH,
+    CORPUS_RAW_DIR,
+    EMBEDDING_MODEL,
+    LOG_LEVEL,
+)
+from src.retriever import load_model
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +71,15 @@ HEADING_P = re.compile(r'<p[^>]*class="oj-sti-art"[^>]*>(.*?)</p>', re.S)
 FOOTNOTE = re.compile(r'<span[^>]*class="oj-super[^"]*"[^>]*>.*?</span>', re.S)
 TAG = re.compile(r"<[^>]+>")
 
-# Most retrieval embedding models are BERT-based and read at most 512 tokens;
-# anything past that is dropped from the vector while still sitting in the text,
-# so the passage stays searchable only up to its cut. 350 words is roughly 455
-# tokens, which leaves margin for a tokenizer that splits legal terms finely.
-WORD_BUDGET = 350
+# BGE is BERT-based and reads 512 tokens, its [CLS]/[SEP] markers included.
+# Past that the words stay in the chunk but never reach the vector, so the
+# passage is searchable only up to its cut and nothing says so.
+TOKEN_LIMIT = 512
+# The citation is prepended once a chunk is packed, so its tokens have to be
+# set aside beforehand. Measured over the corpus: 9 tokens median, 45 at worst
+# (annex titles that quote an article and a point).
+CITATION_RESERVE = 64
+TOKEN_BUDGET = TOKEN_LIMIT - CITATION_RESERVE
 
 # Numbered paragraphs inside an article: `<div id="013.002">` is Article 13(2).
 SUBPARA_DIV = re.compile(r'<div id="\d{3}\.(?P<paragraph>\d{3})">')
@@ -126,24 +139,51 @@ def segment(fragment: str) -> list[tuple[str, str]]:
     return [(number, text) for number, text in segments if text]
 
 
-def fit(text: str, budget: int) -> list[str]:
-    """Break one segment into sentence groups of at most `budget` words.
+def count_words(text: str) -> int:
+    """Measure a passage in words.
+
+    A stand-in for the tokenizer wherever the embedding model is not loaded.
+    It is a poor proxy for this corpus -- legal references such as "Directive
+    (EU) 2020/1828" tokenise at over two tokens per word against a median of
+    1.21 -- so it is never what the ingest itself uses.
+    """
+    return len(text.split())
+
+
+def token_counter(model=None):
+    """Return a callable measuring a passage the way the model will read it.
+
+    Args:
+        model: An already-loaded model, to avoid loading it twice in one run.
+
+    Returns:
+        A function from text to token count, truncation disabled so that an
+        overlong passage reports its real length instead of the ceiling.
+    """
+    tokenizer = (model or load_model()).model.tokenizer
+    tokenizer.no_truncation()
+    return lambda text: len(tokenizer.encode(text).ids)
+
+
+def fit(text: str, budget: int, measure) -> list[str]:
+    """Break one segment into groups no larger than `budget`.
 
     Args:
         text: A single segment.
-        budget: Word ceiling per group.
+        budget: Ceiling per group, in whatever unit `measure` returns.
+        measure: Callable sizing a passage.
 
     Returns:
         The segment unchanged when it already fits, else its sentence groups.
     """
-    if len(text.split()) <= budget:
+    if measure(text) <= budget:
         return [text]
 
     groups: list[str] = []
     current: list[str] = []
     size = 0
     for sentence in SEGMENT_BREAK.split(text):
-        length = len(sentence.split())
+        length = measure(sentence)
         if current and size + length > budget:
             groups.append(" ".join(current))
             current, size = [], 0
@@ -154,8 +194,10 @@ def fit(text: str, budget: int) -> list[str]:
     return groups
 
 
-def pack(segments: list[tuple[str, str]], budget: int) -> list[tuple[str, str]]:
-    """Group consecutive segments into chunks of at most `budget` words.
+def pack(
+    segments: list[tuple[str, str]], budget: int, measure
+) -> list[tuple[str, str]]:
+    """Group consecutive segments into chunks no larger than `budget`.
 
     Adjacent short paragraphs merge on purpose. A 12-word paragraph on its own
     embeds into a vector that matches almost nothing, and mixing 12-word with
@@ -163,7 +205,8 @@ def pack(segments: list[tuple[str, str]], budget: int) -> list[tuple[str, str]]:
 
     Args:
         segments: Output of `segment`.
-        budget: Word ceiling per chunk.
+        budget: Ceiling per chunk, in whatever unit `measure` returns.
+        measure: Callable sizing a passage.
 
     Returns:
         (paragraph label, text) per chunk; the label spans the paragraphs the
@@ -171,8 +214,8 @@ def pack(segments: list[tuple[str, str]], budget: int) -> list[tuple[str, str]]:
     """
     chunks: list[list] = []
     for number, text in segments:
-        for piece in fit(text, budget):
-            length = len(piece.split())
+        for piece in fit(text, budget, measure):
+            length = measure(piece)
             if chunks and chunks[-1][2] + length <= budget:
                 chunks[-1][0].append(number)
                 chunks[-1][1].append(piece)
@@ -191,8 +234,8 @@ def pack(segments: list[tuple[str, str]], budget: int) -> list[tuple[str, str]]:
     return packed
 
 
-def split_units(page: str, doc: dict, retrieved_on: str) -> list[dict]:
-    """Split one act into citable chunks of at most WORD_BUDGET words.
+def split_units(page: str, doc: dict, retrieved_on: str, measure) -> list[dict]:
+    """Split one act into citable chunks that fit the embedding window.
 
     Every article, recital and annex yields at least one chunk; long ones yield
     several, cut at their own paragraph boundaries.
@@ -201,6 +244,7 @@ def split_units(page: str, doc: dict, retrieved_on: str) -> list[dict]:
         page: The act's EUR-Lex HTML.
         doc: An entry of SOURCES.
         retrieved_on: ISO date the HTML was downloaded, carried into each chunk.
+        measure: Callable sizing a passage, normally from `token_counter`.
 
     Returns:
         Chunks in document order, each self-describing enough to be cited.
@@ -230,7 +274,7 @@ def split_units(page: str, doc: dict, retrieved_on: str) -> list[dict]:
         stripped = HEADING_P.sub(" ", TITLE_P.sub(" ", fragment))
 
         for part, (paragraph, body) in enumerate(
-            pack(segment(stripped), WORD_BUDGET), start=1
+            pack(segment(stripped), TOKEN_BUDGET, measure), start=1
         ):
             # A chunk cites the paragraphs it actually covers, so a passage
             # retrieved from Article 13 is quoted as Article 13(2), not as the
@@ -315,10 +359,14 @@ def main() -> None:
     logging.basicConfig(level=LOG_LEVEL, format="%(levelname)s %(message)s")
     CORPUS_RAW_DIR.mkdir(parents=True, exist_ok=True)
 
+    logger.info("Loading %s", EMBEDDING_MODEL)
+    model = load_model()
+    measure = token_counter(model)
+
     chunks: list[dict] = []
     for doc in SOURCES:
         page, retrieved_on = fetch(doc)
-        parsed = split_units(page, doc, retrieved_on)
+        parsed = split_units(page, doc, retrieved_on, measure)
         if not parsed:
             raise ValueError(
                 f"No ELI anchors found in {doc['short']}: EUR-Lex markup changed, "
@@ -332,6 +380,20 @@ def main() -> None:
         encoding="utf-8",
     )
     logger.info("Wrote %d chunks to %s", len(chunks), CORPUS_PATH)
+
+    # Vectors are built in the same run as the chunks on purpose. They are one
+    # artifact: an index built from a stale corpus retrieves passages whose
+    # text and citation no longer match, and nothing about it looks wrong.
+    logger.info("Embedding %d chunks", len(chunks))
+    vectors = np.asarray(
+        list(model.embed(chunk["text"] for chunk in chunks)), dtype=np.float32
+    )
+    np.savez(
+        CORPUS_INDEX_PATH,
+        vectors=vectors,
+        chunk_ids=np.array([chunk["chunk_id"] for chunk in chunks]),
+    )
+    logger.info("Wrote a %s index to %s", vectors.shape, CORPUS_INDEX_PATH)
 
 
 if __name__ == "__main__":

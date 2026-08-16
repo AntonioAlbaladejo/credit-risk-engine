@@ -12,6 +12,13 @@ DATA_DIR = BASE_DIR / "data"
 CORPUS_DIR = BASE_DIR / "corpus"
 CORPUS_RAW_DIR = CORPUS_DIR / "raw"
 CORPUS_PATH = CORPUS_DIR / "eu_regulation.jsonl"
+# Vectors are regenerated rather than versioned: searching needs the embedding
+# model loaded anyway, to turn the query into a vector, so shipping the matrix
+# would save a clone nothing.
+CORPUS_INDEX_PATH = CORPUS_DIR / "embeddings.npz"
+# Chunk size belongs to the embedding model, not to the text: the model reads a
+# fixed window and drops the rest, so changing model means re-chunking.
+EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 
 # Model paths
 MODEL_PATH = MODELS_DIR / "best_tuned_model_xgboost.joblib"

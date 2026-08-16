@@ -219,6 +219,9 @@ data/*.zip
 # recuperación y hace falta sin red); el HTML de origen no, porque lo vuelve a
 # descargar scripts/ingest_corpus.py cuando falta.
 corpus/raw/
+# Los vectores se regeneran: buscar exige cargar el modelo igualmente, para
+# convertir la consulta en vector, así que versionar la matriz no ahorra nada.
+corpus/*.npz
 
 # Modelos entrenados (Los archivos binarios de ML son pesados)
 models/*.pkl
