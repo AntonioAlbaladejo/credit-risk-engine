@@ -15,6 +15,7 @@ import json
 import numpy as np
 import pytest
 
+from src.config import CORPUS_PATH, GOLDEN_SET_PATH
 from src.retriever import CorpusRetriever
 
 # Three chunks placed on three orthogonal axes, so a query aimed at one axis
@@ -103,6 +104,38 @@ def test_an_index_built_from_a_different_corpus_is_rejected(tmp_path):
 
     with pytest.raises(ValueError, match="different corpus"):
         CorpusRetriever.from_files(corpus_path, index_path)
+
+
+# --- The golden set is data, and wrong data fails silently ---
+
+
+def test_every_expected_unit_exists_in_the_corpus():
+    """A label naming a unit that is not there can never be hit.
+
+    That is the failure mode worth a test: hit-rate would drop, the retriever
+    would look worse than it is, and the cause would be a typo in a label
+    rather than anything the retriever did.
+    """
+    with CORPUS_PATH.open(encoding="utf-8") as handle:
+        units = {json.loads(line)["chunk_id"].split("#")[0] for line in handle}
+    with GOLDEN_SET_PATH.open(encoding="utf-8") as handle:
+        questions = [json.loads(line) for line in handle]
+
+    unknown = {
+        unit for record in questions for unit in record["expected"] if unit not in units
+    }
+    assert not unknown, f"golden set points at units absent from the corpus: {unknown}"
+
+
+def test_unanswerable_questions_say_why_they_are_unanswerable():
+    """An empty label is a claim about the corpus, so it carries its reasoning."""
+    with GOLDEN_SET_PATH.open(encoding="utf-8") as handle:
+        questions = [json.loads(line) for line in handle]
+
+    assert any(record["expected"] for record in questions)
+    assert all(record.get("note") for record in questions if not record["expected"]), (
+        "a question labelled unanswerable needs a note explaining that judgement"
+    )
 
 
 # --- Cases below need the real model and the built index ---

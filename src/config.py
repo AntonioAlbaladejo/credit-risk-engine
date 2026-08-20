@@ -16,6 +16,10 @@ CORPUS_PATH = CORPUS_DIR / "eu_regulation.jsonl"
 # model loaded anyway, to turn the query into a vector, so shipping the matrix
 # would save a clone nothing.
 CORPUS_INDEX_PATH = CORPUS_DIR / "embeddings.npz"
+# Hand-written evaluation set: questions with the units that should answer them.
+# Committed, unlike the vectors -- it is the labelled data any retrieval change
+# is measured against, not a build artifact.
+GOLDEN_SET_PATH = CORPUS_DIR / "golden_questions.jsonl"
 # Chunk size belongs to the embedding model, not to the text: the model reads a
 # fixed window and drops the rest, so changing model means re-chunking.
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"

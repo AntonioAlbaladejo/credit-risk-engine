@@ -1,0 +1,31 @@
+{"question": "If we reject automatically, do we have to tell the customer that a machine made the decision, or is notifying the denial enough?", "role": "compliance", "expected": ["gdpr:art_13", "gdpr:art_14", "gdpr:art_15", "gdpr:art_22", "ai_act:art_26", "ai_act:art_86"]}
+{"question": "How long do we have to keep the record of a credit scoring decision?", "role": "compliance", "expected": ["ai_act:art_12", "ai_act:art_19", "ai_act:art_26", "gdpr:art_30"]}
+{"question": "Do we need an impact assessment for this system, or are we covered by the one for the core banking platform?", "role": "compliance", "expected": ["gdpr:art_35", "ai_act:art_27"]}
+{"question": "A customer asks for everything we hold about them and how we used it. Does the score and its reasons count?", "role": "compliance", "expected": ["gdpr:art_15"]}
+{"question": "Can we deny an application without any human reviewing the case?", "role": "compliance", "expected": ["gdpr:art_22", "ai_act:art_14"]}
+{"question": "A customer has requested human review of a rejection. How long do we have to respond?", "role": "compliance", "expected": ["gdpr:art_12", "gdpr:art_22"]}
+{"question": "What model documentation must be complete before going to production?", "role": "model risk", "expected": ["ai_act:art_11", "ai_act:anx_IV"]}
+{"question": "How often must the model be revalidated?", "role": "model risk", "expected": ["ai_act:art_9", "ai_act:art_72"]}
+{"question": "Who has to sign off the approval of a new model?", "role": "model risk", "expected": ["ai_act:art_17", "ai_act:art_43", "ai_act:art_47"]}
+{"question": "The model has not been retrained for eight months and has drifted. Does that put us in breach?", "role": "model risk", "expected": ["ai_act:art_9", "ai_act:art_15", "ai_act:art_72"]}
+{"question": "Do we have to register the system somewhere before launching it?", "role": "model risk", "expected": ["ai_act:art_49", "ai_act:art_71", "ai_act:anx_VIII"]}
+{"question": "Can I use postal code as a variable?", "role": "data science", "expected": ["ai_act:art_10", "gdpr:art_5", "gdpr:art_9"]}
+{"question": "Age is in the model. Is that a problem?", "role": "data science", "expected": ["ai_act:art_10", "gdpr:art_5"]}
+{"question": "Can I train the next version on last year's rejected applications?", "role": "data science", "expected": ["ai_act:art_10", "gdpr:art_5", "gdpr:art_6"]}
+{"question": "Do we have to prove the model does not discriminate? Against which groups and with what metric?", "role": "data science", "expected": ["ai_act:art_10", "ai_act:art_27"]}
+{"question": "Can I send the applicant's data to an external API so an LLM writes the explanation?", "role": "data science", "expected": ["ai_act:art_25", "gdpr:art_28", "gdpr:art_44", "gdpr:art_45", "gdpr:art_46"]}
+{"question": "If we use a vendor's model instead of our own, do our obligations change?", "role": "data science", "expected": ["ai_act:art_16", "ai_act:art_25", "ai_act:art_26"]}
+{"question": "The customer asks what they would need to change to be approved. Can we tell them?", "role": "customer care", "expected": [], "note": "Counterfactual advice is commercial policy. No EU provision compels or forbids it, so inventing one is the failure to catch."}
+{"question": "Can the reason for rejection be given by phone or does it have to be in writing?", "role": "customer care", "expected": ["gdpr:art_12"]}
+{"question": "If the main reason is their debt-to-income ratio, what exactly do we tell them?", "role": "customer care", "expected": ["ai_act:art_86", "gdpr:art_15"]}
+{"question": "The customer says one of the data points is wrong. Do we have to score them again?", "role": "customer care", "expected": ["gdpr:art_16", "gdpr:art_19"]}
+{"question": "We want to launch this in the United States. Does the same system work there?", "role": "legal", "expected": [], "note": "No US material ingested. Reg B / 12 CFR 1002 would answer it; until then the honest response is that the corpus does not cover it."}
+{"question": "Can we use the same model to set the interest rate, not just to approve or deny?", "role": "legal", "expected": ["ai_act:art_6", "ai_act:anx_III"]}
+{"question": "Is this system high risk? What exactly does that mean for us?", "role": "legal", "expected": ["ai_act:art_6", "ai_act:art_8", "ai_act:anx_III"]}
+{"question": "If a regulator asks us to explain a decision from two years ago, what must we be able to show?", "role": "legal", "expected": ["ai_act:art_12", "ai_act:art_19", "ai_act:art_26", "gdpr:art_30"]}
+{"question": "Show me the evidence of who approved the decision threshold and when.", "role": "audit", "expected": [], "note": "Internal model governance. The regulation requires a quality management system, not a named approver per threshold."}
+{"question": "How do we prove the explanation we gave the customer matches what the model actually did?", "role": "audit", "expected": [], "note": "No provision mandates that an explanation be faithful to the model. A confident citation here is a fabricated obligation."}
+{"question": "Why did you reject this particular applicant?", "role": "control", "expected": [], "note": "Belongs to assess_loan_application, not to retrieval."}
+{"question": "What is our approval rate this month?", "role": "control", "expected": [], "note": "Operational metric. Nothing in the corpus can answer it."}
+{"question": "What AUC does the model have?", "role": "control", "expected": [], "note": "Belongs to get_model_info, not to retrieval."}
+{"question": "How much do we charge in origination fee?", "role": "control", "expected": [], "note": "Commercial term. Nothing in the corpus can answer it."}
