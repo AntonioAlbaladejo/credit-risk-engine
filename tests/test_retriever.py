@@ -15,7 +15,7 @@ import json
 import numpy as np
 import pytest
 
-from src.config import CORPUS_PATH, GOLDEN_SET_PATH
+from src.config import CORPUS_PATH, GOLDEN_SET_PATH, QUERY_INSTRUCTION
 from src.retriever import CorpusRetriever
 
 # Three chunks placed on three orthogonal axes, so a query aimed at one axis
@@ -104,6 +104,74 @@ def test_an_index_built_from_a_different_corpus_is_rejected(tmp_path):
 
     with pytest.raises(ValueError, match="different corpus"):
         CorpusRetriever.from_files(corpus_path, index_path)
+
+
+def test_a_demoted_unit_loses_to_an_equally_similar_one():
+    """The whole point: same similarity, different unit, different rank.
+
+    The stub embedder points exactly between the article and the recital, so
+    the cosine is identical and only the weight can break the tie.
+    """
+    chunks = [
+        {**CHUNKS[0], "unit": "recital"},
+        {**CHUNKS[1], "unit": "article"},
+    ]
+    vectors = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    midpoint = np.array([0.5**0.5, 0.5**0.5], dtype=np.float32)
+
+    hits = CorpusRetriever(
+        chunks, vectors, lambda query: midpoint, {"recital": 0.9, "article": 1.0}
+    ).search("anything", k=2)
+
+    assert hits[0]["chunk_id"] == CHUNKS[1]["chunk_id"]
+    assert hits[0]["score"] > hits[1]["score"]
+
+
+def test_a_unit_with_no_weight_is_left_alone():
+    """An unlisted unit must not be silently demoted to zero."""
+    chunks = [{**CHUNKS[0], "unit": "something_new"}]
+    vectors = np.array([[1.0]], dtype=np.float32)
+
+    hits = CorpusRetriever(
+        chunks,
+        vectors,
+        lambda query: np.array([1.0], dtype=np.float32),
+        {"recital": 0.0},
+    ).search("anything", k=1)
+
+    assert hits[0]["score"] == 1.0
+
+
+def test_the_query_carries_the_instruction_the_model_expects(tmp_path, monkeypatch):
+    """Asymmetric retrieval needs the instruction on the query, and only there.
+
+    Nothing fails when it is missing -- the search just quietly becomes
+    symmetric and the ranking degrades -- so the only way to catch it is to
+    assert on what actually reaches the encoder.
+    """
+    corpus_path = tmp_path / "corpus.jsonl"
+    corpus_path.write_text(
+        "".join(json.dumps(chunk) + "\n" for chunk in CHUNKS), encoding="utf-8"
+    )
+    index_path = tmp_path / "index.npz"
+    np.savez(
+        index_path,
+        vectors=VECTORS,
+        chunk_ids=np.array([chunk["chunk_id"] for chunk in CHUNKS]),
+    )
+
+    encoded = []
+
+    class StubModel:
+        def embed(self, texts):
+            texts = list(texts)
+            encoded.extend(texts)
+            return iter(VECTORS[: len(texts)])
+
+    monkeypatch.setattr("src.retriever.load_model", lambda: StubModel())
+    CorpusRetriever.from_files(corpus_path, index_path).search("anything", k=1)
+
+    assert encoded == [QUERY_INSTRUCTION + "anything"]
 
 
 # --- The golden set is data, and wrong data fails silently ---

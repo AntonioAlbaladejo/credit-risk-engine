@@ -23,6 +23,25 @@ GOLDEN_SET_PATH = CORPUS_DIR / "golden_questions.jsonl"
 # Chunk size belongs to the embedding model, not to the text: the model reads a
 # fixed window and drops the rest, so changing model means re-chunking.
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+# Prepended to the question, never to the passage. This model is trained for
+# asymmetric retrieval -- a short question against a long passage -- and its
+# card asks for this exact wording on the query side. It moves with the model:
+# a different encoder wants different wording, or none at all, and the wrong
+# one degrades ranking without erroring.
+QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
+# Similarity is multiplied by the weight of the unit the passage belongs to.
+# Recitals are the preamble: explanatory prose that reads like a question and
+# therefore embeds closer to one than the article it explains, which is what
+# actually binds.
+#
+# 0.90 is the weakest penalty that gets the full effect -- the sweep over
+# corpus/golden_questions.jsonl is flat from here down to 0.0, so a harder
+# penalty buys nothing and only discards more signal. Be aware that at this
+# weight recitals stop reaching the top 5 almost entirely: the mechanism is a
+# multiplier, but on this corpus it behaves close to a filter. Re-run the sweep
+# if the corpus or the embedding model changes; the right value is a property
+# of both, not a constant.
+UNIT_WEIGHTS = {"article": 1.0, "annex": 1.0, "recital": 0.90}
 
 # Model paths
 MODEL_PATH = MODELS_DIR / "best_tuned_model_xgboost.joblib"

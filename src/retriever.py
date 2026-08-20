@@ -17,7 +17,13 @@ from pathlib import Path
 
 import numpy as np
 
-from src.config import CORPUS_INDEX_PATH, CORPUS_PATH, EMBEDDING_MODEL
+from src.config import (
+    CORPUS_INDEX_PATH,
+    CORPUS_PATH,
+    EMBEDDING_MODEL,
+    QUERY_INSTRUCTION,
+    UNIT_WEIGHTS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +43,21 @@ def load_model():
 class CorpusRetriever:
     """Ranks corpus chunks against a question by cosine similarity."""
 
-    def __init__(self, chunks: list[dict], vectors: np.ndarray, embed_query):
+    def __init__(
+        self,
+        chunks: list[dict],
+        vectors: np.ndarray,
+        embed_query,
+        unit_weights: dict[str, float] | None = None,
+    ):
         """Bind a corpus to the vectors built from it.
 
         Args:
             chunks: Corpus records, in the order their vectors were built.
             vectors: One L2-normalised row per chunk.
             embed_query: Callable turning a question into one such row.
+            unit_weights: Multiplier per `unit`, defaulting to `UNIT_WEIGHTS`.
+                A unit not listed is left alone.
 
         Raises:
             ValueError: The vectors do not describe these chunks.
@@ -53,9 +67,13 @@ class CorpusRetriever:
                 f"{len(vectors)} vectors for {len(chunks)} chunks: the index is "
                 "stale. Re-run `uv run python -m scripts.ingest_corpus`."
             )
+        weights = UNIT_WEIGHTS if unit_weights is None else unit_weights
         self.chunks = chunks
         self.vectors = vectors
         self.embed_query = embed_query
+        self.weights = np.array(
+            [weights.get(chunk.get("unit"), 1.0) for chunk in chunks], dtype=np.float32
+        )
 
     @classmethod
     def from_files(
@@ -92,11 +110,12 @@ class CorpusRetriever:
         return cls(
             chunks,
             stored["vectors"],
-            # BGE v1.5 needs no instruction prefix on the query -- fastembed's
-            # query_embed returns the same vector as embed for the same text.
-            # Earlier BGE and E5 releases do, and getting that wrong degrades
-            # ranking silently, so it moves with the model.
-            lambda query: next(iter(model.query_embed([query]))),
+            # The instruction is prepended here rather than relying on
+            # query_embed, which returns a vector identical to embed for this
+            # model: fastembed does not apply one. Without it the search is
+            # symmetric while the task is not, and only the ranking suffers --
+            # nothing errors.
+            lambda query: next(iter(model.embed([QUERY_INSTRUCTION + query]))),
         )
 
     def search(self, query: str, k: int = 5) -> list[dict]:
@@ -107,10 +126,15 @@ class CorpusRetriever:
             k: How many passages to return.
 
         Returns:
-            One dict per passage with its citation, text and similarity.
+            One dict per passage with its citation, text and score. `score` is
+            the ranking score, not a raw cosine: it carries the unit weight, so
+            two passages with the same score are not equally similar unless
+            they share a unit.
         """
-        # Both sides are L2-normalised, so the dot product is the cosine.
-        scores = self.vectors @ self.embed_query(query)
+        # Both sides are L2-normalised, so the dot product is the cosine. The
+        # weight then demotes whole classes of passage that embed well and
+        # answer badly.
+        scores = (self.vectors @ self.embed_query(query)) * self.weights
         # argpartition finds the top k without ordering the rest; only those k
         # are then sorted.
         k = min(k, len(scores))
