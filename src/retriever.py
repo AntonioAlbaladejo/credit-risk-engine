@@ -21,6 +21,7 @@ from src.config import (
     CORPUS_INDEX_PATH,
     CORPUS_PATH,
     EMBEDDING_MODEL,
+    MIN_SCORE,
     QUERY_INSTRUCTION,
     UNIT_WEIGHTS,
 )
@@ -118,18 +119,24 @@ class CorpusRetriever:
             lambda query: next(iter(model.embed([QUERY_INSTRUCTION + query]))),
         )
 
-    def search(self, query: str, k: int = 5) -> list[dict]:
+    def search(
+        self, query: str, k: int = 5, min_score: float = MIN_SCORE
+    ) -> list[dict]:
         """Return the k passages closest to a question, best first.
 
         Args:
             query: A natural-language question.
             k: How many passages to return.
+            min_score: Passages scoring below this are dropped. Pass 0.0 to see
+                the ranking itself, which is what evaluating it needs.
 
         Returns:
-            One dict per passage with its citation, text and score. `score` is
-            the ranking score, not a raw cosine: it carries the unit weight, so
-            two passages with the same score are not equally similar unless
-            they share a unit.
+            One dict per passage with its citation, text and score, or an empty
+            list when nothing clears `min_score` -- which is the retriever
+            saying it has no answer, and must be passed on as that rather than
+            filled in downstream. `score` is the ranking score, not a raw
+            cosine: it carries the unit weight, so two passages with the same
+            score are not equally similar unless they share a unit.
         """
         # Both sides are L2-normalised, so the dot product is the cosine. The
         # weight then demotes whole classes of passage that embed well and
@@ -149,4 +156,5 @@ class CorpusRetriever:
                 "score": round(float(scores[index]), 4),
             }
             for index in top[np.argsort(-scores[top])]
+            if scores[index] >= min_score
         ]

@@ -209,7 +209,7 @@ real predictions and becomes healthy in about 5 seconds. Training tools — MLfl
 
 ```bash
 docker build -t credit-risk-engine:local . && docker run --rm -p 8000:8000 credit-risk-engine:local
-uv run pytest                                           # 150 tests, ~6s
+uv run pytest                                           # 159 tests, ~6s
 uv run python scripts/train.py --baselines              # reproduce the comparison tables
 uv run python scripts/train.py --save clean-unweighted  # promote a run to models/
 ```

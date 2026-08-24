@@ -42,6 +42,19 @@ QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
 # if the corpus or the embedding model changes; the right value is a property
 # of both, not a constant.
 UNIT_WEIGHTS = {"article": 1.0, "annex": 1.0, "recital": 0.90}
+# Below this ranking score the retriever returns nothing rather than its best
+# guess. Most questions put to this corpus have no answer in it -- they are
+# about the product, the model or the business -- and a passage cited for one
+# of those is worse than silence: it reads like grounding and is not.
+#
+# Fitted on corpus/golden_questions.jsonl, and therefore optimistic: the same
+# 31 questions chose the value and measured it. 0.66 is taken from the middle
+# of a plateau (0.64-0.67 all score 24-25 of 31 handled correctly) rather than
+# from the peak, so it does not sit on the edge of a cliff. Treat it as an
+# upper bound on the real quality, not an estimate of it, and re-fit it
+# whenever the corpus, the unit weights or the embedding model change --
+# it is a property of that scale, and the scale moves with all three.
+MIN_SCORE = 0.66
 
 # Model paths
 MODEL_PATH = MODELS_DIR / "best_tuned_model_xgboost.joblib"

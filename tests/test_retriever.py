@@ -15,7 +15,7 @@ import json
 import numpy as np
 import pytest
 
-from src.config import CORPUS_PATH, GOLDEN_SET_PATH, QUERY_INSTRUCTION
+from src.config import CORPUS_PATH, GOLDEN_SET_PATH, MIN_SCORE, QUERY_INSTRUCTION
 from src.retriever import CorpusRetriever
 
 # Three chunks placed on three orthogonal axes, so a query aimed at one axis
@@ -56,19 +56,21 @@ def test_search_ranks_the_closest_passage_first():
 
 
 def test_search_returns_results_in_descending_order():
-    scores = [hit["score"] for hit in retriever().search("anything", k=3)]
+    scores = [
+        hit["score"] for hit in retriever().search("anything", k=3, min_score=0.0)
+    ]
     assert scores == sorted(scores, reverse=True)
 
 
 def test_score_is_the_cosine_between_query_and_passage():
     """Both sides are L2-normalised, so an exact hit scores 1 and the rest 0."""
-    hits = retriever(aim=2).search("anything", k=3)
+    hits = retriever(aim=2).search("anything", k=3, min_score=0.0)
     assert hits[0]["score"] == 1.0
     assert all(hit["score"] == 0.0 for hit in hits[1:])
 
 
 def test_asking_for_more_than_the_corpus_holds_returns_the_corpus():
-    assert len(retriever().search("anything", k=50)) == len(CHUNKS)
+    assert len(retriever().search("anything", k=50, min_score=0.0)) == len(CHUNKS)
 
 
 def test_every_hit_carries_what_makes_it_checkable(chunks=CHUNKS):
@@ -121,7 +123,7 @@ def test_a_demoted_unit_loses_to_an_equally_similar_one():
 
     hits = CorpusRetriever(
         chunks, vectors, lambda query: midpoint, {"recital": 0.9, "article": 1.0}
-    ).search("anything", k=2)
+    ).search("anything", k=2, min_score=0.0)
 
     assert hits[0]["chunk_id"] == CHUNKS[1]["chunk_id"]
     assert hits[0]["score"] > hits[1]["score"]
@@ -137,7 +139,7 @@ def test_a_unit_with_no_weight_is_left_alone():
         vectors,
         lambda query: np.array([1.0], dtype=np.float32),
         {"recital": 0.0},
-    ).search("anything", k=1)
+    ).search("anything", k=1, min_score=0.0)
 
     assert hits[0]["score"] == 1.0
 
@@ -172,6 +174,41 @@ def test_the_query_carries_the_instruction_the_model_expects(tmp_path, monkeypat
     CorpusRetriever.from_files(corpus_path, index_path).search("anything", k=1)
 
     assert encoded == [QUERY_INSTRUCTION + "anything"]
+
+
+# --- Abstention: saying nothing is an answer, and has to survive refactors ---
+
+
+def two_chunks(first: float, second: float):
+    """A retriever whose two passages score exactly what the test asks for."""
+    chunks = [{**CHUNKS[0], "unit": "article"}, {**CHUNKS[1], "unit": "article"}]
+    vectors = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    query = np.array([first, second], dtype=np.float32)
+    return CorpusRetriever(chunks, vectors, lambda _: query, {"article": 1.0})
+
+
+def test_a_ranking_that_clears_nothing_returns_nothing():
+    """The empty list is the retriever saying it has no answer.
+
+    Returning the best of a bad ranking instead is the failure this whole
+    threshold exists to prevent: a citation that reads as grounding and is not.
+    """
+    assert two_chunks(0.5, 0.4).search("anything", min_score=0.66) == []
+
+
+def test_the_threshold_drops_only_the_passages_below_it():
+    hits = two_chunks(0.8, 0.5).search("anything", k=2, min_score=0.66)
+    assert [hit["score"] for hit in hits] == [0.8]
+
+
+def test_search_abstains_by_default():
+    """The safe behaviour has to be the one a caller gets for free.
+
+    A default of 0.0 would still pass every ranking test in this file while
+    silently handing every caller its best guess.
+    """
+    assert two_chunks(0.5, 0.4).search("anything") == []
+    assert MIN_SCORE > 0.0
 
 
 # --- The golden set is data, and wrong data fails silently ---
