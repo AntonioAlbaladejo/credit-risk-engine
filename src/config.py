@@ -47,13 +47,18 @@ UNIT_WEIGHTS = {"article": 1.0, "annex": 1.0, "recital": 0.90}
 # about the product, the model or the business -- and a passage cited for one
 # of those is worse than silence: it reads like grounding and is not.
 #
-# Fitted on corpus/golden_questions.jsonl, and therefore optimistic: the same
-# 31 questions chose the value and measured it. 0.66 is taken from the middle
-# of a plateau (0.64-0.67 all score 24-25 of 31 handled correctly) rather than
-# from the peak, so it does not sit on the edge of a cliff. Treat it as an
-# upper bound on the real quality, not an estimate of it, and re-fit it
-# whenever the corpus, the unit weights or the embedding model change --
-# it is a property of that scale, and the scale moves with all three.
+# Fitted on the `fit` split of corpus/golden_questions.jsonl only (59 of 101
+# questions), from the middle of a plateau -- 0.64 to 0.67 all handle 43-44 of
+# those 59 correctly -- rather than from the peak, so it does not sit on a
+# cliff edge. Re-fit it whenever the corpus, the unit weights or the embedding
+# model change: it is a property of that similarity scale, and the scale moves
+# with all three. `uv run python -m scripts.evaluate_retrieval` prints the
+# sweep and reports the held-out split separately.
+#
+# What it does NOT buy: on the held-out split this threshold still serves 6
+# wrong citations out of 42 questions, against 10 right ones. An earlier
+# reading of "zero wrong citations" came from 31 questions that had also
+# chosen the value, and did not survive contact with unseen ones.
 MIN_SCORE = 0.66
 
 # Model paths

@@ -45,17 +45,24 @@ def unit_of(chunk_id: str) -> str:
     return chunk_id.split("#")[0]
 
 
-def load_golden_set(path: Path = GOLDEN_SET_PATH) -> list[dict]:
+def load_golden_set(
+    path: Path = GOLDEN_SET_PATH, split: str | None = None
+) -> list[dict]:
     """Read the labelled questions.
 
     Args:
-        path: JSONL with `question`, `role` and `expected` per line.
+        path: JSONL with `question`, `role`, `expected` and `split` per line.
+        split: Keep only `fit` or only `test`; None keeps everything. `fit` is
+            where thresholds and weights are chosen, `test` is only ever read
+            to report -- tuning on it turns it back into a fit set and there is
+            no second one.
 
     Returns:
         One dict per question, in file order.
     """
     with path.open(encoding="utf-8") as handle:
-        return [json.loads(line) for line in handle]
+        records = [json.loads(line) for line in handle]
+    return [r for r in records if split is None or r["split"] == split]
 
 
 def evaluate(retriever: CorpusRetriever, questions: list[dict]) -> dict:
@@ -191,7 +198,16 @@ def report(outcome: dict) -> None:
 
 
 def main() -> None:
-    report(evaluate(CorpusRetriever.from_files(), load_golden_set()))
+    retriever = CorpusRetriever.from_files()
+    for split, caption in (
+        ("fit", "where MIN_SCORE and the unit weights were chosen -- optimistic"),
+        ("test", "never used to choose anything -- this is the number to quote"),
+    ):
+        questions = load_golden_set(split=split)
+        print(
+            f"\n{'=' * 72}\n{split.upper()} split, {len(questions)} questions: {caption}"
+        )
+        report(evaluate(retriever, questions))
 
 
 if __name__ == "__main__":

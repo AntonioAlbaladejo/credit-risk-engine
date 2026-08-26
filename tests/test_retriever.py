@@ -232,6 +232,27 @@ def test_every_expected_unit_exists_in_the_corpus():
     assert not unknown, f"golden set points at units absent from the corpus: {unknown}"
 
 
+def test_the_two_splits_are_disjoint_and_both_can_measure_abstention():
+    """A split with no unanswerable questions cannot measure abstention at all.
+
+    And a question in both splits would let the test set report on a threshold
+    chosen from it, which is the whole thing the split exists to prevent.
+    """
+    with GOLDEN_SET_PATH.open(encoding="utf-8") as handle:
+        questions = [json.loads(line) for line in handle]
+
+    splits = {"fit": set(), "test": set()}
+    for record in questions:
+        splits[record["split"]].add(record["question"])
+
+    assert not splits["fit"] & splits["test"]
+    for name in splits:
+        unanswerable = [
+            r for r in questions if r["split"] == name and not r["expected"]
+        ]
+        assert unanswerable, f"the {name} split has no unanswerable questions"
+
+
 def test_unanswerable_questions_say_why_they_are_unanswerable():
     """An empty label is a claim about the corpus, so it carries its reasoning."""
     with GOLDEN_SET_PATH.open(encoding="utf-8") as handle:
