@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "credit-risk-engine": {
+      "command": "uv",
+      "args": ["run", "--all-groups", "python", "-m", "src.mcp_server"]
+    }
+  }
+}

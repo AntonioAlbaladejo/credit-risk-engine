@@ -209,7 +209,7 @@ real predictions and becomes healthy in about 5 seconds. Training tools — MLfl
 
 ```bash
 docker build -t credit-risk-engine:local . && docker run --rm -p 8000:8000 credit-risk-engine:local
-uv run pytest                                           # 160 tests, ~6s
+uv run pytest                                           # 163 tests, ~6s
 uv run python scripts/train.py --baselines              # reproduce the comparison tables
 uv run python scripts/train.py --save clean-unweighted  # promote a run to models/
 ```
@@ -241,6 +241,53 @@ status code, not a payload.
 
 ---
 
+## LLM surface: explanations and regulatory grounding
+
+An MCP server ([`src/mcp_server.py`](src/mcp_server.py)) exposes the model to LLM clients such as
+Claude Desktop or Claude Code over JSON-RPC on stdio. There is no LLM on this side: the client's own
+model reads the tool descriptions and decides when to call them, which makes those descriptions
+prompt surface rather than developer documentation.
+
+| Tool | What it answers |
+|---|---|
+| `assess_loan_application` | Probability of default, the decision at the tuned threshold, and the reason codes that drove it |
+| `get_model_info` | The model itself — type, threshold, features |
+| `search_regulation` | The passages of the GDPR and the EU AI Act bearing on a question, each with its citation |
+
+**Reason codes, not raw SHAP.** [`src/explainer.py`](src/explainer.py) runs exact TreeSHAP against
+the native booster and groups per-feature contributions into named reasons. The client receives
+derived reasons and never the raw application, and the tool description states that contributions
+are log-odds — they add up, but they are not shares of the probability and must never be presented
+as percentages.
+
+**Retrieval that knows when to stay quiet.** The corpus is the GDPR and the AI Act pulled from
+EUR-Lex, split on their ELI anchors into **759 passages** sized against the embedding model's
+512-token window, each carrying the citation, source URL and consultation date that let a reader
+check it. Search is an exact cosine scan over `BAAI/bge-small-en-v1.5`; recitals are demoted relative
+to articles because explanatory prose reads like a question and outranks the provision that actually
+binds.
+
+Below a tuned similarity threshold the tool returns **no passages at all**, and says so. Most
+questions put to a system like this one are about the product, the model or the business, and a
+provision cited for one of those is worse than silence — it reads as grounding and is not. Measured
+on a hand-labelled set of **101 questions** split 59 for fitting and 42 held out, on
+questions never used to choose anything: **69.7% hit-rate@5**, and 23 of 42 questions handled
+correctly once abstention is applied. Five alternatives were measured against that set and
+dropped — a BM25 hybrid, a cross-encoder reranker, indexing headings separately, merging an internal
+policy document into the same index, and four larger embedding models, none of which beat the small
+one on held-out questions.
+
+```bash
+uv run python -m scripts.ingest_corpus   # build corpus/ and its vector index
+```
+
+`search_regulation` needs that index, which is generated rather than versioned; without it the tool
+raises an actionable error while the other two keep working, which is why the corpus and the scoring
+bundle load through separate lazy accessors. [`.mcp.json`](.mcp.json) registers the server for any
+MCP client opened in this directory.
+
+---
+
 ## Stack and data
 
 | Layer | Tools |
@@ -248,6 +295,7 @@ status code, not a payload.
 | Modelling | XGBoost, scikit-learn, pandas, NumPy |
 | Tracking · monitoring | MLflow, Evidently |
 | Serving | FastAPI, Pydantic v2, uvicorn |
+| LLM surface | MCP SDK, SHAP, fastembed |
 | Packaging · quality | uv, Docker multi-stage, pytest, ruff |
 | Delivery | GitHub Actions, Amazon ECR, ECS Fargate (eu-west-1) |
 
@@ -270,6 +318,11 @@ whole, giving the **24 features** the model uses. Raw data is not committed.
 - **Grade F is still under-predicted** by 0.068 on the 51 test rows that carry it. Restoring the
   one-hot block stopped F and G from being scored as B, but 7 sparse dummies share no strength
   between neighbouring grades; an ordinal encoding with `monotone_constraints` is the follow-up.
+- **Regulatory search misses roughly a third of what it should find.** 69.7% hit-rate@5 on
+  held-out questions, and the confidence interval on 33 answerable questions is wide. The abstention
+  threshold buys 10 correct answers for 6 wrong citations, so the signal separating "the corpus
+  answers this" from "it does not" is real but weak (AUC 0.72). Faithfulness of a generated answer
+  is not measured at all yet.
 - **CORS is wide open** (`allow_origins=["*"]`) and the Evidently report compares against a
   three-row hand-written reference file, so its drift numbers are not meaningful yet.
 
