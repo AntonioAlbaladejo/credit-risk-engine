@@ -32,6 +32,7 @@ from src.config import (
 )
 from src.explainer import RiskExplainer
 from src.predictor import CreditRiskPredictor
+from src.retriever import CorpusRetriever
 
 # Logs go to stderr on purpose. stdout carries the JSON-RPC frames, so anything
 # printed there corrupts the protocol.
@@ -45,11 +46,15 @@ server = MCPServer(
         "Scores consumer loan applications for probability of default and "
         "explains the drivers behind each decision. Answer from tool results "
         "only: never estimate a default probability yourself, and never invent "
-        "a reason the tool did not return."
+        "a reason the tool did not return. It also searches the GDPR and the "
+        "EU AI Act for the provisions bearing on a question; the same rule "
+        "applies there, and an empty regulatory result means the corpus does "
+        "not cover the question, not that no law exists."
     ),
 )
 
 _explainer: RiskExplainer | None = None
+_retriever: CorpusRetriever | None = None
 
 
 def get_explainer() -> RiskExplainer:
@@ -73,6 +78,28 @@ def get_explainer() -> RiskExplainer:
         _explainer = RiskExplainer(predictor)
         logger.info("Credit risk bundle loaded")
     return _explainer
+
+
+def get_retriever() -> CorpusRetriever:
+    """Load the regulatory corpus and its index once, on first use.
+
+    Kept separate from the scoring bundle so that each is paid for only when
+    used: a client that never asks about regulation does not load the
+    embedding model, and a checkout with no index built still serves the two
+    scoring tools.
+
+    Returns:
+        A retriever over the corpus, abstaining below `MIN_SCORE`.
+
+    Raises:
+        FileNotFoundError: The corpus or its index has not been built. Run
+            `uv run python -m scripts.ingest_corpus`.
+    """
+    global _retriever
+    if _retriever is None:
+        _retriever = CorpusRetriever.from_files()
+        logger.info("Regulatory corpus loaded")
+    return _retriever
 
 
 @server.tool()
@@ -134,6 +161,57 @@ def get_model_info() -> dict:
         "threshold_note": "Applications scoring at or above the threshold are rejected.",
         "num_features": info["num_features"],
         "features": info["features"],
+    }
+
+
+@server.tool()
+def search_regulation(question: str) -> dict:
+    """Find the passages of EU law that bear on a question about this system.
+
+    Covers the GDPR and the EU AI Act in full. Call it whenever the user asks
+    what the law requires, permits or forbids -- automated decisions, the right
+    to an explanation, high-risk classification, record-keeping, human
+    oversight -- so that the answer cites the provision instead of recalling
+    it.
+
+    Quote and cite only what comes back. Every passage carries the `citation`
+    naming it and the `source_url` and `retrieved_on` that let a reader check
+    it. A claim about the law that no returned passage supports must not be
+    presented as grounded, however confident you are that it is true.
+
+    An empty `passages` list is an answer, not a failure: nothing in the corpus
+    is close enough to the question. Say the regulatory corpus does not cover
+    it rather than answering from your own knowledge of the law.
+
+    The corpus is EU legislation and nothing else. It holds no internal policy,
+    no record of what this organisation has actually done, and no US
+    regulation, so it cannot say what *we* do -- only what the law requires.
+    """
+    hits = get_retriever().search(question)
+    if not hits:
+        # Stated in the payload as well as in the docstring above. The result
+        # is what the model rereads while composing its answer, and this is
+        # the point where answering from memory is most tempting.
+        return {
+            "passages": [],
+            "note": (
+                "No passage in the regulatory corpus is close enough to this "
+                "question, so the corpus does not answer it."
+            ),
+        }
+    return {
+        "passages": [
+            {
+                "citation": hit["citation"],
+                "text": hit["text"],
+                "source_url": hit["source_url"],
+                "retrieved_on": hit["retrieved_on"],
+            }
+            # `score` and `chunk_id` stay out: the score is a ranking quantity
+            # carrying the unit weight, not a similarity a reader could
+            # interpret, and the threshold has already consumed it here.
+            for hit in hits
+        ]
     }
 
 

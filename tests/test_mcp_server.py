@@ -4,18 +4,20 @@ Skipped unless the optional `genai` dependency group is installed
 (`uv sync --all-groups`), so CI -- which runs a plain `uv sync --frozen` --
 stays green without pulling the MCP SDK into the image's dependency tree.
 
-The tools are thin wrappers over RiskExplainer and CreditRiskPredictor, both
-covered elsewhere. What these cases pin is the part only reachable through the
-protocol: the schema the calling model is handed, and the shape of what comes
-back.
+The tools are thin wrappers over RiskExplainer, CreditRiskPredictor and
+CorpusRetriever, all covered elsewhere. What these cases pin is the part only
+reachable through the protocol: the schema the calling model is handed, and the
+shape of what comes back.
 """
 
 import asyncio
+import importlib.util
 import json
 
 import pytest
 
 from src.config import (
+    CORPUS_INDEX_PATH,
     FEATURE_NAMES_PATH,
     MAX_LOAN_INT_RATE,
     MIN_LOAN_INT_RATE,
@@ -29,6 +31,13 @@ pytest.importorskip("mcp", reason="optional 'genai' dependency group not install
 from src.mcp_server import server  # noqa: E402
 
 ARTIFACTS = [MODEL_PATH, PREPROCESSOR_PATH, FEATURE_NAMES_PATH, THRESHOLD_PATH]
+
+# The regulatory tool needs the embedding model and a built index; the scoring
+# tools need neither, which is the point of loading them separately.
+needs_corpus = pytest.mark.skipif(
+    importlib.util.find_spec("fastembed") is None or not CORPUS_INDEX_PATH.exists(),
+    reason="corpus index not built, or fastembed not installed",
+)
 
 pytestmark = [
     pytest.mark.real_artifacts,
@@ -58,9 +67,13 @@ def call(tool: str, arguments: dict | None = None) -> dict:
     return json.loads(result.content[0].text)
 
 
-def test_both_tools_are_exposed():
+def test_every_tool_is_exposed():
     names = {tool.name for tool in asyncio.run(server.list_tools())}
-    assert names == {"assess_loan_application", "get_model_info"}
+    assert names == {
+        "assess_loan_application",
+        "get_model_info",
+        "search_regulation",
+    }
 
 
 def test_every_tool_carries_a_description():
@@ -130,3 +143,52 @@ def test_model_info_reports_the_promoted_bundle():
         == len(info["features"])
         == len(joblib.load(FEATURE_NAMES_PATH))
     )
+
+
+# --- The regulatory tool: what it says when it has nothing to say ---
+
+
+@needs_corpus
+def test_a_question_the_corpus_cannot_answer_returns_no_passages():
+    """The empty list is the contract this whole phase was built around.
+
+    Returning a best guess instead is the failure the threshold exists to
+    prevent: a citation that reads as grounding and is not. Measured, this
+    question tops out at 0.61 against a threshold of 0.66.
+    """
+    result = call(
+        "search_regulation", {"question": "Who signed off our latest model validation?"}
+    )
+    assert result["passages"] == []
+    # The docstring tells the model what an empty list means; the payload has
+    # to say it too, because the result is what it rereads while answering.
+    assert result["note"]
+
+
+@needs_corpus
+def test_an_answerable_question_returns_checkable_passages():
+    """A passage without its citation and consultation date cannot be verified."""
+    result = call(
+        "search_regulation",
+        {
+            "question": "Does the applicant have a right to an explanation of the decision?"
+        },
+    )
+    assert result["passages"]
+    for passage in result["passages"]:
+        assert passage["citation"] and passage["text"]
+        assert passage["source_url"] and passage["retrieved_on"]
+
+
+@needs_corpus
+def test_passages_omit_the_ranking_internals():
+    """The score carries the unit weight, so it is not a similarity to report.
+
+    A model handed 0.67 starts describing its own confidence, and the
+    threshold has already consumed that number on this side.
+    """
+    result = call(
+        "search_regulation",
+        {"question": "What information must be given about automated decisions?"},
+    )
+    assert all("score" not in p and "chunk_id" not in p for p in result["passages"])
