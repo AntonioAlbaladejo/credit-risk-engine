@@ -22,6 +22,7 @@ from src.config import (
     CORPUS_PATH,
     EMBEDDING_MODEL,
     MIN_SCORE,
+    MIN_SCORE_WITH_PASSAGE,
     QUERY_INSTRUCTION,
     UNIT_WEIGHTS,
 )
@@ -120,7 +121,11 @@ class CorpusRetriever:
         )
 
     def search(
-        self, query: str, k: int = 5, min_score: float = MIN_SCORE
+        self,
+        query: str,
+        k: int = 5,
+        min_score: float | None = None,
+        hypothetical_passage: str = "",
     ) -> list[dict]:
         """Return the k passages closest to a question, best first.
 
@@ -128,7 +133,12 @@ class CorpusRetriever:
             query: A natural-language question.
             k: How many passages to return.
             min_score: Passages scoring below this are dropped. Pass 0.0 to see
-                the ranking itself, which is what evaluating it needs.
+                the ranking itself, which is what evaluating it needs. Defaults
+                to the threshold fitted for whichever path is taken.
+            hypothetical_passage: An invented passage answering `query`, in the
+                register of the corpus. When given, it drives the ranking and
+                `query` is used only to decide whether to answer at all.
+                Optional: without it the search behaves exactly as before.
 
         Returns:
             One dict per passage with its citation, text and score, or an empty
@@ -138,10 +148,26 @@ class CorpusRetriever:
             cosine: it carries the unit weight, so two passages with the same
             score are not equally similar unless they share a unit.
         """
+        if min_score is None:
+            min_score = MIN_SCORE_WITH_PASSAGE if hypothetical_passage else MIN_SCORE
         # Both sides are L2-normalised, so the dot product is the cosine. The
         # weight then demotes whole classes of passage that embed well and
         # answer badly.
         scores = (self.vectors @ self.embed_query(query)) * self.weights
+        cutoff = min_score
+        if hypothetical_passage:
+            # The passage ranks far better but its scores bunch up (0.017
+            # between answerable and unanswerable, against 0.048 for the
+            # question), so it cannot tell when it has nothing. Passage orders,
+            # question decides.
+            if float(scores.max()) < min_score:
+                return []
+            scores = (
+                self.vectors @ self.embed_query(hypothetical_passage)
+            ) * self.weights
+            # Gate already decided, and this scale is not the one min_score
+            # was fitted against.
+            cutoff = 0.0
         # argpartition finds the top k without ordering the rest; only those k
         # are then sorted.
         k = min(k, len(scores))
@@ -156,5 +182,5 @@ class CorpusRetriever:
                 "score": round(float(scores[index]), 4),
             }
             for index in top[np.argsort(-scores[top])]
-            if scores[index] >= min_score
+            if scores[index] >= cutoff
         ]

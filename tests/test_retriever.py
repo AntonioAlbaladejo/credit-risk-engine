@@ -15,7 +15,13 @@ import json
 import numpy as np
 import pytest
 
-from src.config import CORPUS_PATH, GOLDEN_SET_PATH, MIN_SCORE, QUERY_INSTRUCTION
+from src.config import (
+    CORPUS_PATH,
+    GOLDEN_SET_PATH,
+    MIN_SCORE,
+    MIN_SCORE_WITH_PASSAGE,
+    QUERY_INSTRUCTION,
+)
 from src.retriever import CorpusRetriever
 
 # Three chunks placed on three orthogonal axes, so a query aimed at one axis
@@ -78,6 +84,57 @@ def test_every_hit_carries_what_makes_it_checkable(chunks=CHUNKS):
     hit = retriever().search("anything", k=1)[0]
     assert hit["citation"] == "GDPR, Article 22(1-4)"
     assert hit["source_url"] and hit["retrieved_on"]
+
+
+def two_signal_retriever(question_vector, passage_vector):
+    """A stub embedder answering differently per text.
+
+    The two arguments are embedded separately, so a stub ignoring its input
+    cannot exercise the split.
+    """
+    lookup = {"question": question_vector, "passage": passage_vector}
+    return CorpusRetriever(CHUNKS, VECTORS, lambda text: lookup[text])
+
+
+def test_a_hypothetical_passage_takes_over_the_ranking():
+    """The question aims at one chunk, the passage at another. The passage wins."""
+    hits = two_signal_retriever(VECTORS[0], VECTORS[1]).search(
+        "question", k=3, hypothetical_passage="passage"
+    )
+    assert hits[0]["chunk_id"] == "ai_act:anx_III#2"
+
+
+def test_the_question_still_decides_whether_anything_is_returned():
+    """A perfect passage must not talk the retriever into answering.
+
+    This is what separating the two signals buys: an invention cannot
+    manufacture grounding.
+    """
+    aimless = np.zeros(3, dtype=np.float32)
+    assert (
+        two_signal_retriever(aimless, VECTORS[1]).search(
+            "question", hypothetical_passage="passage"
+        )
+        == []
+    )
+
+
+def test_each_path_uses_the_threshold_fitted_for_it():
+    """0.62 sits between the two thresholds, so it separates them exactly."""
+    question = np.float32(0.62) * VECTORS[0]
+    assert MIN_SCORE_WITH_PASSAGE < 0.62 < MIN_SCORE
+    retriever = two_signal_retriever(question, VECTORS[1])
+    assert retriever.search("question") == []
+    assert retriever.search("question", hypothetical_passage="passage")
+
+
+def test_an_empty_passage_leaves_the_search_exactly_as_it_was():
+    """The degraded path is not a fallback bolted on; it is the measured system."""
+    plain = retriever(aim=1).search("anything", k=3, min_score=0.0)
+    with_empty = retriever(aim=1).search(
+        "anything", k=3, min_score=0.0, hypothetical_passage=""
+    )
+    assert plain == with_empty
 
 
 def test_a_vector_count_that_does_not_match_the_corpus_is_rejected():

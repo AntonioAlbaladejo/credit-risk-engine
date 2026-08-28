@@ -60,6 +60,12 @@ UNIT_WEIGHTS = {"article": 1.0, "annex": 1.0, "recital": 0.90}
 # reading of "zero wrong citations" came from 31 questions that had also
 # chosen the value, and did not survive contact with unseen ones.
 MIN_SCORE = 0.66
+# Same signal, re-fitted for the passage-led ranking, which finds an answer for
+# more questions and so pays off further down. Held-out: 32 of 42 right against
+# 22, wrong citations 10 -> 4. The cost of being lower is that [0.60, 0.66) now
+# gets answered -- "Who signed off our latest model validation?" (0.611) among
+# them. Re-fit alongside MIN_SCORE, never on its own.
+MIN_SCORE_WITH_PASSAGE = 0.60
 
 # Model paths
 MODEL_PATH = MODELS_DIR / "best_tuned_model_xgboost.joblib"

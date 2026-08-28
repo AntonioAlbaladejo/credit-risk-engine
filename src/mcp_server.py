@@ -165,7 +165,7 @@ def get_model_info() -> dict:
 
 
 @server.tool()
-def search_regulation(question: str) -> dict:
+def search_regulation(question: str, hypothetical_passage: str = "") -> dict:
     """Find the passages of EU law that bear on a question about this system.
 
     Covers the GDPR and the EU AI Act in full. Call it whenever the user asks
@@ -173,6 +173,17 @@ def search_regulation(question: str) -> dict:
     to an explanation, high-risk classification, record-keeping, human
     oversight -- so that the answer cites the provision instead of recalling
     it.
+
+    Always fill in `hypothetical_passage`. Before calling, write the provision
+    you would expect to find if the answer existed: two or three sentences in
+    the register of EU legislation ("shall", "the controller", "providers of
+    high-risk AI systems"), with no invented article numbers. It is matched
+    against the corpus in place of the question, and questions are written in
+    business language the legislation never uses, so this roughly halves the
+    passages the search misses. Write it even when unsure what the law says --
+    a wrong guess in the right register still retrieves better than the
+    question alone, and `question` alone decides whether anything is returned,
+    so a bad guess cannot make the tool answer something it should not.
 
     Quote and cite only what comes back. Every passage carries the `citation`
     naming it and the `source_url` and `retrieved_on` that let a reader check
@@ -187,7 +198,7 @@ def search_regulation(question: str) -> dict:
     no record of what this organisation has actually done, and no US
     regulation, so it cannot say what *we* do -- only what the law requires.
     """
-    hits = get_retriever().search(question)
+    hits = get_retriever().search(question, hypothetical_passage=hypothetical_passage)
     if not hits:
         # Stated in the payload as well as in the docstring above. The result
         # is what the model rereads while composing its answer, and this is

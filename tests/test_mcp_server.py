@@ -180,6 +180,43 @@ def test_an_answerable_question_returns_checkable_passages():
         assert passage["source_url"] and passage["retrieved_on"]
 
 
+def test_the_hypothetical_passage_is_offered_but_never_demanded():
+    """A client that ignores it must still get the tool it had before.
+
+    The passage is what makes the search find more, but it is written by the
+    calling model and nothing can force it to arrive. Making it required would
+    turn a client that does not read the docstring into a broken tool.
+    """
+    tool = next(
+        t for t in asyncio.run(server.list_tools()) if t.name == "search_regulation"
+    )
+    assert "hypothetical_passage" in tool.input_schema["properties"]
+    assert "hypothetical_passage" not in tool.input_schema.get("required", [])
+
+
+@needs_corpus
+def test_a_convincing_passage_cannot_make_the_corpus_answer():
+    """Against the real index: a passage that ranks well must still change nothing.
+
+    The question scores 0.50, under both thresholds. One sitting between them
+    would be testing the lower threshold, not the veto.
+    """
+    result = call(
+        "search_regulation",
+        {
+            "question": "Which hyperparameters gave the best score in the last sweep?",
+            "hypothetical_passage": (
+                "The provider shall put in place a quality management system "
+                "including an accountability framework setting out the "
+                "responsibilities of the management and other staff with "
+                "regard to the approval and verification of changes."
+            ),
+        },
+    )
+    assert result["passages"] == []
+    assert result["note"]
+
+
 @needs_corpus
 def test_passages_omit_the_ranking_internals():
     """The score carries the unit weight, so it is not a similarity to report.
