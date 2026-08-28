@@ -209,7 +209,7 @@ real predictions and becomes healthy in about 5 seconds. Training tools — MLfl
 
 ```bash
 docker build -t credit-risk-engine:local . && docker run --rm -p 8000:8000 credit-risk-engine:local
-uv run pytest                                           # 163 tests, ~6s
+uv run pytest                                           # 169 tests, ~6s
 uv run python scripts/train.py --baselines              # reproduce the comparison tables
 uv run python scripts/train.py --save clean-unweighted  # promote a run to models/
 ```
@@ -252,7 +252,7 @@ prompt surface rather than developer documentation.
 |---|---|
 | `assess_loan_application` | Probability of default, the decision at the tuned threshold, and the reason codes that drove it |
 | `get_model_info` | The model itself — type, threshold, features |
-| `search_regulation` | The passages of the GDPR and the EU AI Act bearing on a question, each with its citation |
+| `search_regulation` | The passages of the GDPR and the EU AI Act bearing on a question, each with its citation. Takes an optional hypothetical passage the calling model writes first |
 
 **Reason codes, not raw SHAP.** [`src/explainer.py`](src/explainer.py) runs exact TreeSHAP against
 the native booster and groups per-feature contributions into named reasons. The client receives
@@ -276,6 +276,18 @@ correctly once abstention is applied. Five alternatives were measured against th
 dropped — a BM25 hybrid, a cross-encoder reranker, indexing headings separately, merging an internal
 policy document into the same index, and four larger embedding models, none of which beat the small
 one on held-out questions.
+
+**Two signals, because ranking and abstention are different problems.** Questions arrive in business
+language the legislation never uses — *postal code*, *AUC*, *revalidated*, *vendor* appear nowhere in
+the corpus — so `search_regulation` accepts an optional `hypothetical_passage`: the provision the
+calling model would expect to find, written in the register of the law before it calls. Matching
+passage against passage instead of question against passage lifts hit-rate@5 on the held-out split
+from 69.7% to **97.0%**, but its scores bunch up so tightly (0.017 between answerable and
+unanswerable questions, against 0.048 for the plain question) that the retriever loses all sense of
+when it has nothing — it answered every question put to it, including the ones with no answer. So
+the invented passage takes the ranking and the real question keeps the veto: **32 of 42 held-out
+questions handled correctly against 22, with wrong citations cut from 10 to 4**. The argument is
+optional throughout; a client that omits it gets exactly the measured behaviour above.
 
 ```bash
 uv run python -m scripts.ingest_corpus   # build corpus/ and its vector index
@@ -318,11 +330,16 @@ whole, giving the **24 features** the model uses. Raw data is not committed.
 - **Grade F is still under-predicted** by 0.068 on the 51 test rows that carry it. Restoring the
   one-hot block stopped F and G from being scored as B, but 7 sparse dummies share no strength
   between neighbouring grades; an ordinal encoding with `monotone_constraints` is the follow-up.
-- **Regulatory search misses roughly a third of what it should find.** 69.7% hit-rate@5 on
-  held-out questions, and the confidence interval on 33 answerable questions is wide. The abstention
-  threshold buys 10 correct answers for 6 wrong citations, so the signal separating "the corpus
-  answers this" from "it does not" is real but weak: AUC 0.61 on the held-out split, 0.72 across all
-  101 questions. Faithfulness of a generated answer is not measured at all yet.
+- **Regulatory search misses roughly a third of what it should find** without a hypothetical
+  passage, and the confidence interval on 33 answerable questions is wide either way. The signal
+  separating "the corpus answers this" from "it does not" is real but weak — AUC 0.61 on the held-out
+  split, 0.72 across all 101 questions — and it is the plain question that carries it, so the
+  passage cannot rescue a question the corpus scores low: on 11 of 76 answerable questions the
+  ranking finds the right provision and the threshold discards it anyway. Those are disproportionately
+  the vocabulary-mismatch questions the passage exists to fix, which is the tension in the design.
+  Faithfulness of a generated answer is not measured at all yet, and the passages the numbers above
+  were measured on were written in one batch by one model — a client writing one inline will not
+  write the same thing.
 - **CORS is wide open** (`allow_origins=["*"]`) and the Evidently report compares against a
   three-row hand-written reference file, so its drift numbers are not meaningful yet.
 
