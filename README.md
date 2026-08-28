@@ -321,8 +321,8 @@ whole, giving the **24 features** the model uses. Raw data is not committed.
 - **Regulatory search misses roughly a third of what it should find.** 69.7% hit-rate@5 on
   held-out questions, and the confidence interval on 33 answerable questions is wide. The abstention
   threshold buys 10 correct answers for 6 wrong citations, so the signal separating "the corpus
-  answers this" from "it does not" is real but weak (AUC 0.72). Faithfulness of a generated answer
-  is not measured at all yet.
+  answers this" from "it does not" is real but weak: AUC 0.61 on the held-out split, 0.72 across all
+  101 questions. Faithfulness of a generated answer is not measured at all yet.
 - **CORS is wide open** (`allow_origins=["*"]`) and the Evidently report compares against a
   three-row hand-written reference file, so its drift numbers are not meaningful yet.
 
