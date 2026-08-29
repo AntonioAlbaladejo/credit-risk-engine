@@ -47,25 +47,25 @@ UNIT_WEIGHTS = {"article": 1.0, "annex": 1.0, "recital": 0.90}
 # about the product, the model or the business -- and a passage cited for one
 # of those is worse than silence: it reads like grounding and is not.
 #
-# Fitted on the `fit` split of corpus/golden_questions.jsonl only (59 of 101
-# questions), from the middle of a plateau -- 0.64 to 0.67 all handle 43-44 of
-# those 59 correctly -- rather than from the peak, so it does not sit on a
-# cliff edge. Re-fit it whenever the corpus, the unit weights or the embedding
-# model change: it is a property of that similarity scale, and the scale moves
-# with all three. `uv run python -m scripts.evaluate_retrieval` prints the
-# sweep and reports the held-out split separately.
+# Fitted on the `fit` split of corpus/golden_questions.jsonl only (94 of 161
+# questions), from the middle of the 0.635-0.670 plateau rather than its peak,
+# so it does not sit on a cliff edge.
 #
-# What it does NOT buy: on the held-out split this threshold still serves 6
-# wrong citations out of 42 questions, against 10 right ones. An earlier
-# reading of "zero wrong citations" came from 31 questions that had also
-# chosen the value, and did not survive contact with unseen ones.
-MIN_SCORE = 0.66
-# Same signal, re-fitted for the passage-led ranking, which finds an answer for
-# more questions and so pays off further down. Held-out: 32 of 42 right against
-# 22, wrong citations 10 -> 4. The cost of being lower is that [0.60, 0.66) now
-# gets answered -- "Who signed off our latest model validation?" (0.611) among
-# them. Re-fit alongside MIN_SCORE, never on its own.
-MIN_SCORE_WITH_PASSAGE = 0.60
+# Re-fit it whenever the corpus, the unit weights, the embedding model or **the
+# shape of the questions asked** change. That last one is not padding: widening
+# the set from 101 to 161 questions with terse fragments and rambling ones
+# moved the optimum on its own, with everything else held fixed.
+#
+# What it does NOT buy: on the held-out split it still serves 13 wrong
+# citations out of 67 questions, against 21 right ones.
+# `uv run python -m scripts.evaluate_retrieval` prints the sweep.
+MIN_SCORE = 0.65
+# Same veto, re-fitted for the passage-led ranking, which finds an answer for
+# more questions and so pays off further down. Middle of a narrow 0.590-0.600
+# plateau on `fit`; held out, 47 of 67 right against 39 for the question alone.
+# Re-fit alongside MIN_SCORE: the right value depends on the corpus, the unit
+# weights, the embedding model AND the shape of the questions asked.
+MIN_SCORE_WITH_PASSAGE = 0.595
 
 # Model paths
 MODEL_PATH = MODELS_DIR / "best_tuned_model_xgboost.joblib"

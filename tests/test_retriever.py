@@ -86,14 +86,51 @@ def test_every_hit_carries_what_makes_it_checkable(chunks=CHUNKS):
     assert hit["source_url"] and hit["retrieved_on"]
 
 
-def two_signal_retriever(question_vector, passage_vector):
+# Twelve chunks, not three: with three, every score outside the aimed-at one is
+# a tie, so the order of the rest is arbitrary and a test cannot assert it.
+WIDE_CHUNKS = [
+    {
+        "chunk_id": f"gdpr:art_{i}#1",
+        "citation": f"GDPR, Article {i}",
+        "text": f"provision {i}",
+        "source_url": "https://example.invalid/gdpr",
+        "retrieved_on": "2026-08-17",
+    }
+    for i in range(12)
+]
+WIDE_VECTORS = np.eye(12, dtype=np.float32)
+
+
+def profile(start, peak):
+    """Scores descending from `peak` over five consecutive chunks.
+
+    With an identity index the score vector *is* the query vector, so a test
+    states the ranking it wants instead of deriving it.
+    """
+    vector = np.zeros(12, dtype=np.float32)
+    for offset in range(5):
+        vector[start + offset] = peak - 0.05 * offset
+    return vector
+
+
+def two_signal_retriever(question_vector, passage_vector, chunks=None, vectors=None):
     """A stub embedder answering differently per text.
 
     The two arguments are embedded separately, so a stub ignoring its input
     cannot exercise the split.
     """
     lookup = {"question": question_vector, "passage": passage_vector}
-    return CorpusRetriever(CHUNKS, VECTORS, lambda text: lookup[text])
+    return CorpusRetriever(
+        CHUNKS if chunks is None else chunks,
+        VECTORS if vectors is None else vectors,
+        lambda text: lookup[text],
+    )
+
+
+def wide(question_vector, passage_vector):
+    return two_signal_retriever(
+        question_vector, passage_vector, WIDE_CHUNKS, WIDE_VECTORS
+    )
 
 
 def test_a_hypothetical_passage_takes_over_the_ranking():
@@ -104,15 +141,16 @@ def test_a_hypothetical_passage_takes_over_the_ranking():
     assert hits[0]["chunk_id"] == "ai_act:anx_III#2"
 
 
-def test_the_question_still_decides_whether_anything_is_returned():
-    """A perfect passage must not talk the retriever into answering.
+def test_a_passage_cannot_answer_a_question_the_corpus_scores_low():
+    """An invention must not manufacture grounding.
 
-    This is what separating the two signals buys: an invention cannot
-    manufacture grounding.
+    The question scores 0.50, under either threshold, so however well the
+    passage matches the corpus nothing comes back. Corroboration by ranking
+    agreement was measured as an alternative veto and lost: it cost 3.6
+    correct answers and 4.4 extra wrong citations per cross-validated fold.
     """
-    aimless = np.zeros(3, dtype=np.float32)
     assert (
-        two_signal_retriever(aimless, VECTORS[1]).search(
+        wide(profile(0, 0.50), profile(7, 0.95)).search(
             "question", hypothetical_passage="passage"
         )
         == []
@@ -121,9 +159,8 @@ def test_the_question_still_decides_whether_anything_is_returned():
 
 def test_each_path_uses_the_threshold_fitted_for_it():
     """0.62 sits between the two thresholds, so it separates them exactly."""
-    question = np.float32(0.62) * VECTORS[0]
     assert MIN_SCORE_WITH_PASSAGE < 0.62 < MIN_SCORE
-    retriever = two_signal_retriever(question, VECTORS[1])
+    retriever = wide(profile(0, 0.62), profile(7, 0.95))
     assert retriever.search("question") == []
     assert retriever.search("question", hypothetical_passage="passage")
 
