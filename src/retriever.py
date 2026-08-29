@@ -156,10 +156,10 @@ class CorpusRetriever:
         scores = (self.vectors @ self.embed_query(query)) * self.weights
         cutoff = min_score
         if hypothetical_passage:
-            # The passage ranks far better but its scores bunch up (0.017
-            # between answerable and unanswerable, against 0.048 for the
-            # question), so it cannot tell when it has nothing. Passage orders,
-            # question decides.
+            # Passage orders, question decides. Vetoing on the passage's own
+            # score was measured and lost: it separates groundable questions
+            # slightly better (AUC 0.77 against 0.71) yet every fitted cut for
+            # it serves more wrong citations, 23.6 against 19.1 per fold.
             if float(scores.max()) < min_score:
                 return []
             scores = (

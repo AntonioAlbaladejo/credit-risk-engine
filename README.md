@@ -269,25 +269,36 @@ binds.
 
 Below a tuned similarity threshold the tool returns **no passages at all**, and says so. Most
 questions put to a system like this one are about the product, the model or the business, and a
-provision cited for one of those is worse than silence — it reads as grounding and is not. Measured
-on a hand-labelled set of **101 questions** split 59 for fitting and 42 held out, on
-questions never used to choose anything: **69.7% hit-rate@5**, and 23 of 42 questions handled
-correctly once abstention is applied. Five alternatives were measured against that set and
-dropped — a BM25 hybrid, a cross-encoder reranker, indexing headings separately, merging an internal
-policy document into the same index, and four larger embedding models, none of which beat the small
-one on held-out questions.
+provision cited for one of those is worse than silence — it reads as grounding and is not. It is
+measured against a hand-labelled set of **161 questions**, 94 for fitting and 67 held out, written
+to look like what the tool actually receives: terse fragments, questions that ramble for a
+paragraph, false premises, banking jargon, and a third that the corpus genuinely cannot answer.
+Every unanswerable one carries a note justifying that label, because an empty label is a claim
+about the corpus. On the held-out split the plain path reaches **72.0% hit-rate@5** and handles 39
+of 67 questions correctly. Five alternatives were measured and dropped — a BM25 hybrid, a
+cross-encoder reranker, indexing headings separately, merging an internal policy document into the
+same index, and four larger embedding models.
 
 **Two signals, because ranking and abstention are different problems.** Questions arrive in business
 language the legislation never uses — *postal code*, *AUC*, *revalidated*, *vendor* appear nowhere in
 the corpus — so `search_regulation` accepts an optional `hypothetical_passage`: the provision the
 calling model would expect to find, written in the register of the law before it calls. Matching
 passage against passage instead of question against passage lifts hit-rate@5 on the held-out split
-from 69.7% to **97.0%**, but its scores bunch up so tightly (0.017 between answerable and
-unanswerable questions, against 0.048 for the plain question) that the retriever loses all sense of
-when it has nothing — it answered every question put to it, including the ones with no answer. So
-the invented passage takes the ranking and the real question keeps the veto: **32 of 42 held-out
-questions handled correctly against 22, with wrong citations cut from 10 to 4**. The argument is
-optional throughout; a client that omits it gets exactly the measured behaviour above.
+from 72.0% to **98.0%**. The invented passage takes the ranking, and the real question keeps the
+veto over whether to answer at all — not because the passage is a poor judge of that, but because
+it is a worse one to act on: its score orders groundable questions slightly better (AUC 0.77 against
+0.71) and yet every threshold fitted to it serves more wrong citations, 23.6 against 19.1 per
+cross-validated fold. Ordering well and cutting well are not the same property.
+
+That arrangement handles **47 of 67 held-out questions correctly against 39** for the plain path,
+and the shape of the gain matters more than the total: it answers 43 correctly where the plain path
+answers 21, for **one** additional wrong citation. What it does not buy is better abstention —
+it stays quiet on only 4 of the 18 questions it should refuse, against 18 for the plain path. A
+second veto arm that answered whenever the two rankings independently agreed on a passage looked
+like it fixed that, and won on the first, smaller question set. Cross-validated inside the fitting
+split it lost 7 folds out of 8, costing 3.6 correct answers and 4.4 extra wrong citations, so it
+was dropped. The hypothetical passage is optional throughout; a client that omits it gets the plain
+path unchanged.
 
 ```bash
 uv run python -m scripts.ingest_corpus   # build corpus/ and its vector index
@@ -330,16 +341,18 @@ whole, giving the **24 features** the model uses. Raw data is not committed.
 - **Grade F is still under-predicted** by 0.068 on the 51 test rows that carry it. Restoring the
   one-hot block stopped F and G from being scored as B, but 7 sparse dummies share no strength
   between neighbouring grades; an ordinal encoding with `monotone_constraints` is the follow-up.
-- **Regulatory search misses roughly a third of what it should find** without a hypothetical
-  passage, and the confidence interval on 33 answerable questions is wide either way. The signal
-  separating "the corpus answers this" from "it does not" is real but weak — AUC 0.61 on the held-out
-  split, 0.72 across all 101 questions — and it is the plain question that carries it, so the
-  passage cannot rescue a question the corpus scores low: on 11 of 76 answerable questions the
-  ranking finds the right provision and the threshold discards it anyway. Those are disproportionately
-  the vocabulary-mismatch questions the passage exists to fix, which is the tension in the design.
-  Faithfulness of a generated answer is not measured at all yet, and the passages the numbers above
-  were measured on were written in one batch by one model — a client writing one inline will not
-  write the same thing.
+- **The regulatory search knows when to answer far better than when to stay quiet.** With a
+  hypothetical passage it finds the right provision for 98% of the questions the corpus can answer,
+  but of the 18 held-out questions it should refuse it refuses only 4 — AUC 0.71 for the signal
+  separating "the corpus answers this" from "it does not". Faithfulness of a generated answer is not
+  measured at all yet, so a cited passage is checkable but an answer built on it is not.
+- **The retrieval numbers are fitted and read on question sets that no longer surprise it.** Every
+  threshold here was chosen on the fitting split, but the held-out split has been read repeatedly
+  across this work, and a set looked at many times stops being held out. Enlarging the set from 101
+  to 161 questions with more realistic phrasing already overturned one result that had looked solid
+  on the smaller set, which is the honest argument for treating the current ones as provisional. The
+  hypothetical passages were also written in a single batch by one model; a client writing one
+  inline will not write the same thing, and that sensitivity is unmeasured.
 - **CORS is wide open** (`allow_origins=["*"]`) and the Evidently report compares against a
   three-row hand-written reference file, so its drift numbers are not meaningful yet.
 
