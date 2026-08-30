@@ -190,9 +190,11 @@ def search_regulation(question: str, hypothetical_passage: str = "") -> dict:
     it. A claim about the law that no returned passage supports must not be
     presented as grounded, however confident you are that it is true.
 
-    An empty `passages` list is an answer, not a failure: nothing in the corpus
-    is close enough to the question. Say the regulatory corpus does not cover
-    it rather than answering from your own knowledge of the law.
+    An empty `passages` list is an answer, not a failure. It means either that
+    nothing in the corpus is close enough, or that the question asks what this
+    organisation actually did rather than what the law requires -- legislation
+    states requirements and holds no record of anyone's compliance with them.
+    Say so rather than answering from your own knowledge of the law.
 
     The corpus is EU legislation and nothing else. It holds no internal policy,
     no record of what this organisation has actually done, and no US
@@ -202,12 +204,17 @@ def search_regulation(question: str, hypothetical_passage: str = "") -> dict:
     if not hits:
         # Stated in the payload as well as in the docstring above. The result
         # is what the model rereads while composing its answer, and this is
-        # the point where answering from memory is most tempting.
+        # the point where answering from memory is most tempting. Both
+        # refusals are named: silence for the second reason used to be
+        # reported as the first, which reads as a gap in the corpus.
         return {
             "passages": [],
             "note": (
-                "No passage in the regulatory corpus is close enough to this "
-                "question, so the corpus does not answer it."
+                "The regulatory corpus does not answer this question: either "
+                "no passage is close enough, or the question asks what this "
+                "organisation did rather than what the law requires, which "
+                "legislation cannot say. Answer from the tools that hold that "
+                "information, or say it is not available here."
             ),
         }
     return {
