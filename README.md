@@ -284,11 +284,14 @@ language the legislation never uses — *postal code*, *AUC*, *revalidated*, *ve
 the corpus — so `search_regulation` accepts an optional `hypothetical_passage`: the provision the
 calling model would expect to find, written in the register of the law before it calls. Matching
 passage against passage instead of question against passage lifts hit-rate@5 on the held-out split
-from 72.0% to **98.0%**. The invented passage takes the ranking, and the real question keeps the
-veto over whether to answer at all — not because the passage is a poor judge of that, but because
-it is a worse one to act on: its score orders groundable questions slightly better (AUC 0.77 against
-0.71) and yet every threshold fitted to it serves more wrong citations, 23.6 against 19.1 per
-cross-validated fold. Ordering well and cutting well are not the same property.
+from 72.0% to **98.0%**. That figure survives a change of writer: a second batch of 161 passages,
+written independently with no sight of the corpus, the retriever or the first batch, shares no
+passage with it and yet finds the same 49 of the 50 answerable held-out questions, over a threshold
+sweep identical to the first batch's. The invented passage takes the ranking, and the real question
+keeps the veto over whether to answer at all — not because the passage is a poor judge of that, but
+because it is a worse one to act on: its score orders groundable questions slightly better (AUC 0.77
+against 0.71) and yet every threshold fitted to it serves more wrong citations, 23.6 against 19.1
+per cross-validated fold. Ordering well and cutting well are not the same property.
 
 That arrangement handles **47 of 67 held-out questions correctly against 39** for the plain path,
 and the shape of the gain matters more than the total: it answers 43 correctly where the plain path
@@ -351,8 +354,9 @@ whole, giving the **24 features** the model uses. Raw data is not committed.
   across this work, and a set looked at many times stops being held out. Enlarging the set from 101
   to 161 questions with more realistic phrasing already overturned one result that had looked solid
   on the smaller set, which is the honest argument for treating the current ones as provisional. The
-  hypothetical passages were also written in a single batch by one model; a client writing one
-  inline will not write the same thing, and that sensitivity is unmeasured.
+  two batches of hypothetical passages that agree question for question were nonetheless written
+  by the same model family, so the writer sensitivity that is bounded here is between independent
+  drafts, not between vendors.
 - **CORS is wide open** (`allow_origins=["*"]`) and the Evidently report compares against a
   three-row hand-written reference file, so its drift numbers are not meaningful yet.
 
