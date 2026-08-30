@@ -20,7 +20,10 @@ import numpy as np
 from src.config import (
     CORPUS_INDEX_PATH,
     CORPUS_PATH,
+    DEONTIC_ANCHORS,
     EMBEDDING_MODEL,
+    EVIDENTIAL_ANCHORS,
+    MIN_ANCHOR_SCORE,
     MIN_SCORE,
     MIN_SCORE_WITH_PASSAGE,
     QUERY_INSTRUCTION,
@@ -51,6 +54,7 @@ class CorpusRetriever:
         vectors: np.ndarray,
         embed_query,
         unit_weights: dict[str, float] | None = None,
+        embed_anchor=None,
     ):
         """Bind a corpus to the vectors built from it.
 
@@ -60,6 +64,9 @@ class CorpusRetriever:
             embed_query: Callable turning a question into one such row.
             unit_weights: Multiplier per `unit`, defaulting to `UNIT_WEIGHTS`.
                 A unit not listed is left alone.
+            embed_anchor: Callable embedding the modality anchors. They are
+                prototypes rather than searches, so they take no query
+                instruction; defaults to `embed_query`.
 
         Raises:
             ValueError: The vectors do not describe these chunks.
@@ -73,6 +80,8 @@ class CorpusRetriever:
         self.chunks = chunks
         self.vectors = vectors
         self.embed_query = embed_query
+        self.embed_anchor = embed_anchor or embed_query
+        self._anchor_delta: np.ndarray | None = None
         self.weights = np.array(
             [weights.get(chunk.get("unit"), 1.0) for chunk in chunks], dtype=np.float32
         )
@@ -118,7 +127,33 @@ class CorpusRetriever:
             # symmetric while the task is not, and only the ranking suffers --
             # nothing errors.
             lambda query: next(iter(model.embed([QUERY_INSTRUCTION + query]))),
+            embed_anchor=lambda text: next(iter(model.embed([text]))),
         )
+
+    def deontic_score(self, query_vector: np.ndarray) -> float:
+        """How far the question asks what the law requires, not what we did.
+
+        Args:
+            query_vector: The embedded question, as `embed_query` returns it.
+
+        Returns:
+            Similarity to the deontic anchors minus similarity to the
+            evidential ones. Positive asks for a requirement, which the corpus
+            can supply; negative asks for a fact about this organisation,
+            which no provision holds however well it matches.
+        """
+        if self._anchor_delta is None:
+            anchors = np.array(
+                [
+                    self.embed_anchor(text)
+                    for text in DEONTIC_ANCHORS + EVIDENTIAL_ANCHORS
+                ]
+            )
+            half = len(DEONTIC_ANCHORS)
+            self._anchor_delta = anchors[:half].mean(axis=0) - anchors[half:].mean(
+                axis=0
+            )
+        return float(query_vector @ self._anchor_delta)
 
     def search(
         self,
@@ -132,9 +167,10 @@ class CorpusRetriever:
         Args:
             query: A natural-language question.
             k: How many passages to return.
-            min_score: Passages scoring below this are dropped. Pass 0.0 to see
-                the ranking itself, which is what evaluating it needs. Defaults
-                to the threshold fitted for whichever path is taken.
+            min_score: Passages scoring below this are dropped, and 0.0 lifts
+                the abstention veto entirely so that the ranking itself can be
+                measured. Defaults to the threshold fitted for whichever path
+                is taken.
             hypothetical_passage: An invented passage answering `query`, in the
                 register of the corpus. When given, it drives the ranking and
                 `query` is used only to decide whether to answer at all.
@@ -153,14 +189,24 @@ class CorpusRetriever:
         # Both sides are L2-normalised, so the dot product is the cosine. The
         # weight then demotes whole classes of passage that embed well and
         # answer badly.
-        scores = (self.vectors @ self.embed_query(query)) * self.weights
+        query_vector = self.embed_query(query)
+        scores = (self.vectors @ query_vector) * self.weights
         cutoff = min_score
         if hypothetical_passage:
             # Passage orders, question decides. Vetoing on the passage's own
             # score was measured and lost: it separates groundable questions
             # slightly better (AUC 0.77 against 0.71) yet every fitted cut for
             # it serves more wrong citations, 23.6 against 19.1 per fold.
-            if float(scores.max()) < min_score:
+            #
+            # Similarity is not the only arm: a question about what this
+            # organisation did scores high against the provision governing the
+            # matter, and no amount of ranking can fix an answer the corpus
+            # does not hold. min_score of 0 disables both arms, which is how
+            # the ranking itself is measured.
+            if min_score > 0 and (
+                float(scores.max()) < min_score
+                or self.deontic_score(query_vector) < MIN_ANCHOR_SCORE
+            ):
                 return []
             scores = (
                 self.vectors @ self.embed_query(hypothetical_passage)

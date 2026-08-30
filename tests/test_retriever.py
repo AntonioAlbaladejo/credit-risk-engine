@@ -17,7 +17,9 @@ import pytest
 
 from src.config import (
     CORPUS_PATH,
+    DEONTIC_ANCHORS,
     GOLDEN_SET_PATH,
+    MIN_ANCHOR_SCORE,
     MIN_SCORE,
     MIN_SCORE_WITH_PASSAGE,
     QUERY_INSTRUCTION,
@@ -113,23 +115,33 @@ def profile(start, peak):
     return vector
 
 
-def two_signal_retriever(question_vector, passage_vector, chunks=None, vectors=None):
+def two_signal_retriever(
+    question_vector, passage_vector, chunks=None, vectors=None, deontic=1.0
+):
     """A stub embedder answering differently per text.
 
     The two arguments are embedded separately, so a stub ignoring its input
-    cannot exercise the split.
+    cannot exercise the split. The anchors are scaled so the question's
+    modality score comes out at exactly `deontic`, which lets a test state the
+    case it wants instead of hand-building six vectors.
     """
     lookup = {"question": question_vector, "passage": passage_vector}
+    scale = deontic / float(question_vector @ question_vector)
     return CorpusRetriever(
         CHUNKS if chunks is None else chunks,
         VECTORS if vectors is None else vectors,
         lambda text: lookup[text],
+        embed_anchor=lambda text: (
+            question_vector * scale
+            if text in DEONTIC_ANCHORS
+            else np.zeros_like(question_vector)
+        ),
     )
 
 
-def wide(question_vector, passage_vector):
+def wide(question_vector, passage_vector, deontic=1.0):
     return two_signal_retriever(
-        question_vector, passage_vector, WIDE_CHUNKS, WIDE_VECTORS
+        question_vector, passage_vector, WIDE_CHUNKS, WIDE_VECTORS, deontic
     )
 
 
@@ -163,6 +175,41 @@ def test_each_path_uses_the_threshold_fitted_for_it():
     retriever = wide(profile(0, 0.62), profile(7, 0.95))
     assert retriever.search("question") == []
     assert retriever.search("question", hypothetical_passage="passage")
+
+
+def test_a_question_about_what_we_did_is_refused_however_well_it_matches():
+    """The failure the modality arm exists for.
+
+    "Did the DPO sign off the impact assessment?" retrieves the article on
+    impact assessments, which every relevance model agrees is a good match --
+    and which cannot say whether the DPO signed anything. Similarity alone
+    clears both thresholds here; the veto has to come from the question.
+    """
+    assert (
+        wide(
+            profile(0, 0.95), profile(7, 0.95), deontic=MIN_ANCHOR_SCORE - 0.01
+        ).search("question", hypothetical_passage="passage")
+        == []
+    )
+
+
+def test_the_modality_arm_stops_where_it_was_fitted():
+    """It was measured on the passage path only, so the plain path keeps its own veto.
+
+    Widening it to a path it was never fitted against would be a change nobody
+    measured, which is how a threshold quietly stops meaning anything.
+    """
+    evidential = wide(profile(0, 0.95), profile(7, 0.95), deontic=-1.0)
+    assert evidential.search("question")
+    assert evidential.search("question", hypothetical_passage="passage") == []
+
+
+def test_measuring_the_ranking_lifts_every_veto_arm():
+    """`min_score=0.0` means "show me the ranking", and a veto would hide it."""
+    hits = wide(profile(0, 0.95), profile(7, 0.95), deontic=-1.0).search(
+        "question", min_score=0.0, hypothetical_passage="passage"
+    )
+    assert hits[0]["chunk_id"] == WIDE_CHUNKS[7]["chunk_id"]
 
 
 def test_an_empty_passage_leaves_the_search_exactly_as_it_was():

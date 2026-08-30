@@ -67,6 +67,25 @@ MIN_SCORE = 0.65
 # weights, the embedding model AND the shape of the questions asked.
 MIN_SCORE_WITH_PASSAGE = 0.595
 
+# A second veto arm, on the modality of the question rather than on similarity.
+# The corpus states what the law requires, so it can answer "must we do X" and
+# structurally cannot answer "did we do X" -- and for the second it returns the
+# provision governing X, which every relevance model agrees is a good match.
+DEONTIC_ANCHORS = [
+    "What does the law require in this situation?",
+    "Are we obliged to do this, and under what conditions?",
+    "Is this permitted, and what conditions apply to it?",
+]
+EVIDENTIAL_ANCHORS = [
+    "What did our organisation actually do in this case?",
+    "Show me our internal record of what happened.",
+    "What is our current measured figure for this?",
+]
+# Middle of the -0.094..-0.048 plateau on `fit`. Cross-validated there it wins
+# 7 seeds of 8 against the question score alone: +4 correct answers and 7 fewer
+# wrong citations per fold set. Re-fit alongside MIN_SCORE_WITH_PASSAGE.
+MIN_ANCHOR_SCORE = -0.071
+
 # Model paths
 MODEL_PATH = MODELS_DIR / "best_tuned_model_xgboost.joblib"
 THRESHOLD_PATH = MODELS_DIR / "optimal_threshold.joblib"
