@@ -209,7 +209,7 @@ real predictions and becomes healthy in about 5 seconds. Training tools — MLfl
 
 ```bash
 docker build -t credit-risk-engine:local . && docker run --rm -p 8000:8000 credit-risk-engine:local
-uv run pytest                                           # 169 tests, ~6s
+uv run pytest                                           # 172 tests, ~6s
 uv run python scripts/train.py --baselines              # reproduce the comparison tables
 uv run python scripts/train.py --save clean-unweighted  # promote a run to models/
 ```
@@ -293,10 +293,20 @@ because it is a worse one to act on: its score orders groundable questions sligh
 against 0.71) and yet every threshold fitted to it serves more wrong citations, 23.6 against 19.1
 per cross-validated fold. Ordering well and cutting well are not the same property.
 
-That arrangement handles **47 of 67 held-out questions correctly against 39** for the plain path,
-and the shape of the gain matters more than the total: it answers 43 correctly where the plain path
-answers 21, for **one** additional wrong citation. What it does not buy is better abstention —
-it stays quiet on only 4 of the 18 questions it should refuse, against 18 for the plain path. A
+**A third arm vetoes on the modality of the question, not on similarity.** The corpus states what
+the law requires, so it can answer *must we do X* and structurally cannot answer *did we do X* — for
+which it returns the provision governing X, a match every relevance model endorses. A cross-encoder
+reranker was measured on exactly these and scored them above 60% of the questions the corpus really
+does answer, so it cannot object; the signal is grammatical, not semantic. Similarity to three
+deontic prototypes minus similarity to three evidential ones separates them, and cross-validated
+inside the fitting split the pair wins 7 seeds of 8 against the corpus score alone.
+
+That arrangement handles **48 of 67 held-out questions correctly against 39** for the plain path,
+and the shape of the gain matters more than the total: it answers 41 correctly where the plain path
+answers 21, and serves **two fewer** wrong citations doing it. The modality arm is what refuses the
+last five, trading 2 real answers for 3 fewer wrong citations there — a trade worth making only
+because a confident wrong citation is the worst outcome this tool has. Abstention is still the weak
+half: it stays quiet on 7 of the 18 questions it should refuse, against 18 for the plain path. A
 second veto arm that answered whenever the two rankings independently agreed on a passage looked
 like it fixed that, and won on the first, smaller question set. Cross-validated inside the fitting
 split it lost 7 folds out of 8, costing 3.6 correct answers and 4.4 extra wrong citations, so it
@@ -346,9 +356,12 @@ whole, giving the **24 features** the model uses. Raw data is not committed.
   between neighbouring grades; an ordinal encoding with `monotone_constraints` is the follow-up.
 - **The regulatory search knows when to answer far better than when to stay quiet.** With a
   hypothetical passage it finds the right provision for 98% of the questions the corpus can answer,
-  but of the 18 held-out questions it should refuse it refuses only 4 — AUC 0.71 for the signal
-  separating "the corpus answers this" from "it does not". Faithfulness of a generated answer is not
-  measured at all yet, so a cited passage is checkable but an answer built on it is not.
+  but of the 18 held-out questions it should refuse it refuses only 7. The modality arm that lifted
+  that from 4 also refuses two questions that are plainly deontic — *what do we have to tell the
+  customer* — because a bi-encoder reads their topic more strongly than their grammar. Fixing that
+  means new anchors chosen against a question set nobody has read yet, not against these.
+  Faithfulness of a generated answer is not measured at all yet, so a cited passage is checkable but
+  an answer built on it is not.
 - **The retrieval numbers are fitted and read on question sets that no longer surprise it.** Every
   threshold here was chosen on the fitting split, but the held-out split has been read repeatedly
   across this work, and a set looked at many times stops being held out. Enlarging the set from 101
