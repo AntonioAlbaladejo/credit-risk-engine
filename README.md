@@ -224,6 +224,7 @@ uv run python scripts/train.py --save clean-unweighted  # promote a run to model
 | `GET` | `/model/info` | Model type, threshold, and the 24 feature names in order |
 | `POST` | `/predict` | Score one application |
 | `POST` | `/predict/batch` | Score up to 100 applications in one call |
+| `POST` | `/regulation/search` | Passages of the GDPR and the AI Act bearing on a question, with citations |
 | `GET` | `/docs` · `/redoc` | OpenAPI documentation |
 
 ![The /predict request schema in the generated OpenAPI documentation](assets/swagger_predict.png)
@@ -317,10 +318,28 @@ path unchanged.
 uv run python -m scripts.ingest_corpus   # build corpus/ and its vector index
 ```
 
-`search_regulation` needs that index, which is generated rather than versioned; without it the tool
-raises an actionable error while the other two keep working, which is why the corpus and the scoring
-bundle load through separate lazy accessors. [`.mcp.json`](.mcp.json) registers the server for any
-MCP client opened in this directory.
+The index is versioned alongside the model artifacts, because CD builds the image from a fresh
+checkout and anything generated is simply absent from it. Rebuild it with the corpus and never on
+its own: `from_files()` compares chunk ids and refuses a pair that disagree, since an index built
+from a stale corpus serves the right-looking text under the wrong citation. Without an index the
+tool raises an actionable error and the endpoint answers `503` while the scoring paths keep
+working, which is why the corpus and the scoring bundle load through separate lazy accessors.
+[`.mcp.json`](.mcp.json) registers the server for any MCP client opened in this directory.
+
+**The same retrieval over HTTP.** `POST /regulation/search` returns the payload `search_regulation`
+returns, built by one method on the retriever that both callers share: the same text served under
+one citation on stdio and another over HTTP is the drift that indirection exists to prevent. The
+endpoint's docstring and field descriptions become its OpenAPI description, which is the REST
+equivalent of the tool description an MCP client reads — a weaker channel, because a caller is free
+not to read it.
+
+The embedding model is baked into the image at build time rather than fetched on first use, so an
+unreachable HuggingFace cannot keep a task from starting; CD asserts it by running the image with
+`--network none`. The corpus is warmed in a background thread at startup, because loading it costs
+12.6 s on the 0.5 vCPU the task is sized at and the first caller after a rollout would otherwise pay
+it. Retrieval adds 205 MB to the image, and resident memory settles at ~345 MB of the task's 1024
+against ~130 MB for the scoring model alone — flat across predictions and searches once warm. On
+that hardware a search costs about what a prediction costs.
 
 ---
 
@@ -360,8 +379,15 @@ whole, giving the **24 features** the model uses. Raw data is not committed.
   that from 4 also refuses two questions that are plainly deontic — *what do we have to tell the
   customer* — because a bi-encoder reads their topic more strongly than their grammar. Fixing that
   means new anchors chosen against a question set nobody has read yet, not against these.
-  Faithfulness of a generated answer is not measured at all yet, so a cited passage is checkable but
-  an answer built on it is not.
+  Abstention matters less than that number suggests, though: 48 answers written from these payloads
+  by a model that was not told its faithfulness was being measured, then graded blind, put **13 of
+  the 13 wrong-citation cases** on record as flagging the gap rather than asserting the law, and no
+  claim invented a fact about this organisation. What the answers do get wrong is following a
+  cross-reference — a returned passage says *without prejudice to Article 78* and the model fills in
+  Article 78 from memory. Returning the referenced provision as well was built and measured, and
+  tripled overclaiming: with twice the material the model shifts from citing to interpreting. Both
+  measurements are one generator, one pass, on the fitting split, and graded by a model of the same
+  family as the one that wrote them.
 - **The retrieval numbers are fitted and read on question sets that no longer surprise it.** Every
   threshold here was chosen on the fitting split, but the held-out split has been read repeatedly
   across this work, and a set looked at many times stops being held out. Enlarging the set from 101
@@ -370,6 +396,10 @@ whole, giving the **24 features** the model uses. Raw data is not committed.
   two batches of hypothetical passages that agree question for question were nonetheless written
   by the same model family, so the writer sensitivity that is bounded here is between independent
   drafts, not between vendors.
+- **Nothing enforces how a caller uses the passages.** Over MCP the tool description travels with
+  every call. Over HTTP the same guidance lives only in the OpenAPI description, which a client can
+  ignore: the service can return citations, and a note saying so when it has nothing, but it cannot
+  make a caller quote them.
 - **CORS is wide open** (`allow_origins=["*"]`) and the Evidently report compares against a
   three-row hand-written reference file, so its drift numbers are not meaningful yet.
 

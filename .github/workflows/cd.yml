@@ -92,7 +92,27 @@ jobs:
           echo "$BODY"
           echo "$BODY" | grep -q '"probability_default"'
 
+          # Same reasoning for the corpus: /predict passes in an image with no
+          # regulatory text and no embedding weights in it. A citation coming
+          # back is the shortest proof that both are there and load.
+          BODY=$(curl -fsS -X POST http://localhost:8000/regulation/search \
+            -H 'Content-Type: application/json' \
+            -d '{"question":"Do we have to let someone contest an automated rejection?",
+                 "hypothetical_passage":"The data subject shall have the right to obtain human intervention on the part of the controller, to express his or her point of view and to contest the decision."}')
+          echo "$BODY"
+          echo "$BODY" | grep -q '"citation"'
+
           docker rm -f verify
+
+      - name: Verify the embedding model is baked in, not downloaded
+        run: |
+          # The runner has network, so a missing bake would still pass every
+          # check above and only fail on Fargate. --network none is the only
+          # place that difference shows up.
+          docker run --rm --network none credit-risk-engine:latest python -c "
+          from src.retriever import CorpusRetriever
+          assert CorpusRetriever.from_files().search('automated decision-making')
+          print('corpus searchable with no network')"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4

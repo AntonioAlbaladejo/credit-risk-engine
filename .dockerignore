@@ -34,7 +34,7 @@ results/
 
 # Source HTML for the regulatory corpus: reingestion material, and untracked,
 # so leaving it in would make the image size depend on the developer's disk.
-# The chunked JSONL stays in: retrieval will read it from the service.
+# The chunked JSONL and its vectors stay in: /regulation/search reads them.
 corpus/raw/
 
 # Tests, docs and CI config (not needed at runtime)
