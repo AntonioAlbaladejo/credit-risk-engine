@@ -200,37 +200,9 @@ def search_regulation(question: str, hypothetical_passage: str = "") -> dict:
     no record of what this organisation has actually done, and no US
     regulation, so it cannot say what *we* do -- only what the law requires.
     """
-    hits = get_retriever().search(question, hypothetical_passage=hypothetical_passage)
-    if not hits:
-        # Stated in the payload as well as in the docstring above. The result
-        # is what the model rereads while composing its answer, and this is
-        # the point where answering from memory is most tempting. Both
-        # refusals are named: silence for the second reason used to be
-        # reported as the first, which reads as a gap in the corpus.
-        return {
-            "passages": [],
-            "note": (
-                "The regulatory corpus does not answer this question: either "
-                "no passage is close enough, or the question asks what this "
-                "organisation did rather than what the law requires, which "
-                "legislation cannot say. Answer from the tools that hold that "
-                "information, or say it is not available here."
-            ),
-        }
-    return {
-        "passages": [
-            {
-                "citation": hit["citation"],
-                "text": hit["text"],
-                "source_url": hit["source_url"],
-                "retrieved_on": hit["retrieved_on"],
-            }
-            # `score` and `chunk_id` stay out: the score is a ranking quantity
-            # carrying the unit weight, not a similarity a reader could
-            # interpret, and the threshold has already consumed it here.
-            for hit in hits
-        ]
-    }
+    return get_retriever().search_payload(
+        question, hypothetical_passage=hypothetical_passage
+    )
 
 
 if __name__ == "__main__":

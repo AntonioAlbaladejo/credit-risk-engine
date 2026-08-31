@@ -32,6 +32,18 @@ from src.config import (
 
 logger = logging.getLogger(__name__)
 
+# Stated in the payload as well as in the tool docstring and the OpenAPI
+# description. The result is what a model rereads while composing its answer,
+# and this is the point where answering from memory is most tempting. Both
+# refusals are named: silence for the second reason used to be reported as the
+# first, which reads as a gap in the corpus.
+NO_ANSWER_NOTE = (
+    "The regulatory corpus does not answer this question: either no passage "
+    "is close enough, or the question asks what this organisation did rather "
+    "than what the law requires, which legislation cannot say. Answer from "
+    "the tools that hold that information, or say it is not available here."
+)
+
 
 def load_model():
     """Load the embedding model shared by ingestion and search.
@@ -230,3 +242,38 @@ class CorpusRetriever:
             for index in top[np.argsort(-scores[top])]
             if scores[index] >= cutoff
         ]
+
+    def search_payload(self, question: str, hypothetical_passage: str = "") -> dict:
+        """Search and shape the result the way every caller reports it.
+
+        Shared by the MCP tool and the HTTP endpoint so the two cannot drift:
+        a passage served under one citation here and another there is the
+        failure this indirection exists to prevent.
+
+        Args:
+            question: The user's question, in their own words.
+            hypothetical_passage: An invented provision to rank by. See
+                `search`.
+
+        Returns:
+            `{"passages": [...]}`, each passage carrying its citation and
+            provenance. When nothing clears the threshold, an empty list and
+            a `note` saying which of the two refusals happened.
+        """
+        hits = self.search(question, hypothetical_passage=hypothetical_passage)
+        if not hits:
+            return {"passages": [], "note": NO_ANSWER_NOTE}
+        return {
+            "passages": [
+                {
+                    "citation": hit["citation"],
+                    "text": hit["text"],
+                    "source_url": hit["source_url"],
+                    "retrieved_on": hit["retrieved_on"],
+                }
+                # `score` and `chunk_id` stay out: the score is a ranking
+                # quantity carrying the unit weight, not a similarity a reader
+                # could interpret, and the threshold has already consumed it.
+                for hit in hits
+            ]
+        }
