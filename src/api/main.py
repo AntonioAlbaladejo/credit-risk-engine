@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import threading
 from contextlib import asynccontextmanager
 from enum import Enum
 
@@ -13,6 +15,8 @@ from src.api.schemas import (
     LoanApplication,
     ModelInfo,
     PredictionResponse,
+    RegulationSearchRequest,
+    RegulationSearchResponse,
 )
 from src.config import (
     API_DESCRIPTION,
@@ -25,6 +29,7 @@ from src.config import (
     THRESHOLD_PATH,
 )
 from src.predictor import CreditRiskPredictor
+from src.retriever import CorpusRetriever
 
 # Configure logging
 logging.basicConfig(level=LOG_LEVEL)
@@ -55,6 +60,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error loading model at startup: {e}")
 
+    # Warm the corpus off the startup path. Loading it costs 12.6 s on the
+    # 0.5 vCPU the task is sized at, which the first caller after every rollout
+    # would otherwise pay. Blocking here instead would push startup from 8 s to
+    # ~20 s, and the health check ECS actually reads lives in the task
+    # definition in AWS, not in this repo -- its startPeriod is not ours to
+    # widen, so startup time stays where it was measured.
+    asyncio.create_task(asyncio.to_thread(_warm_corpus))
+
     yield  # App runs here
 
     # Shutdown (optional cleanup)
@@ -82,6 +95,10 @@ app.add_middleware(
 
 # Load model and preprocessor at startup
 _predictor: CreditRiskPredictor | None = None
+_retriever: CorpusRetriever | None = None
+# Sync endpoints run in a threadpool, so two callers can reach the lazy build
+# at once and each load their own 240 MB copy of the model.
+_retriever_lock = threading.Lock()
 
 
 def get_predictor() -> CreditRiskPredictor:
@@ -101,6 +118,40 @@ def get_predictor() -> CreditRiskPredictor:
             logger.error(f"Error loading model: {e}")
             raise
     return _predictor
+
+
+def get_retriever() -> CorpusRetriever:
+    """Get the corpus retriever, loading it on first use.
+
+    Lazy rather than constructed at import so that a checkout with no index
+    built still serves the scoring endpoints, and so tests can substitute one.
+    In the deployed service `lifespan` warms it in the background, so first use
+    is normally the warm-up rather than a caller.
+
+    Returns:
+        A retriever over the regulatory corpus.
+
+    Raises:
+        FileNotFoundError: The corpus or its index is missing from the image.
+    """
+    global _retriever
+    with _retriever_lock:
+        if _retriever is None:
+            _retriever = CorpusRetriever.from_files()
+            logger.info("Regulatory corpus loaded")
+    return _retriever
+
+
+def _warm_corpus() -> None:
+    """Build the retriever ahead of the first request, tolerating its absence.
+
+    A failure here must not take the service down: the scoring endpoints do
+    not need the corpus, and /regulation/search answers 503 on its own.
+    """
+    try:
+        get_retriever()
+    except Exception as e:
+        logger.warning(f"Regulatory corpus not warmed: {e}")
 
 
 # ==================== HEALTH CHECK ====================
@@ -208,6 +259,60 @@ async def predict_batch(request: BatchPredictionRequest):
         ) from e
 
 
+# ==================== REGULATION ====================
+
+
+@app.post("/regulation/search", response_model=RegulationSearchResponse)
+async def search_regulation(request: RegulationSearchRequest):
+    """Find the passages of EU law that bear on a question about this system.
+
+    Covers the GDPR and the EU AI Act in full. Use it whenever the answer
+    should cite the provision instead of recalling it -- automated decisions,
+    the right to an explanation, high-risk classification, record-keeping,
+    human oversight.
+
+    Quote and cite only what comes back. Every passage carries the `citation`
+    naming it and the `source_url` and `retrieved_on` that let a reader check
+    it. A claim about the law that no returned passage supports must not be
+    presented as grounded, however confident you are that it is true. That
+    includes provisions a returned passage merely names: the corpus is
+    searched, not followed, so "without prejudice to Article 78" does not
+    bring Article 78 with it.
+
+    An empty `passages` list is an answer, not a failure. It means either that
+    nothing in the corpus is close enough, or that the question asks what this
+    organisation actually did rather than what the law requires -- legislation
+    states requirements and holds no record of anyone's compliance with them.
+
+    The corpus is EU legislation and nothing else: no internal policy, no
+    record of what this organisation has done, no US regulation.
+
+    Args:
+        request: The question, and optionally a hypothetical passage to rank
+            by. Filling in the second roughly halves the passages missed.
+
+    Returns:
+        RegulationSearchResponse with the matching passages, best first.
+
+    Raises:
+        HTTPException: 503 when the corpus is not present in the deployment.
+    """
+    try:
+        retriever = get_retriever()
+    except FileNotFoundError as e:
+        logger.error(f"Regulatory corpus unavailable: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The regulatory corpus is not available in this deployment.",
+        ) from e
+
+    return RegulationSearchResponse(
+        **retriever.search_payload(
+            request.question, hypothetical_passage=request.hypothetical_passage
+        )
+    )
+
+
 # ==================== ROOT ====================
 
 
@@ -225,5 +330,6 @@ async def root():
             "model_info": "/model/info",
             "predict": "/predict (POST)",
             "batch_predict": "/predict/batch (POST)",
+            "search_regulation": "/regulation/search (POST)",
         },
     }

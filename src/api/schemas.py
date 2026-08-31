@@ -5,8 +5,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.config import (
     MAX_AGE,
     MAX_EMP_LENGTH,
+    MAX_HYPOTHETICAL_PASSAGE_LENGTH,
     MAX_LOAN_AMOUNT,
     MAX_LOAN_INT_RATE,
+    MAX_QUESTION_LENGTH,
     MIN_AGE,
     MIN_EMP_LENGTH,
     MIN_LOAN_AMOUNT,
@@ -146,3 +148,61 @@ class ModelInfo(BaseModel):
     threshold: float
     num_features: int
     features: list[str]
+
+
+class RegulationSearchRequest(BaseModel):
+    """Schema for a search over the regulatory corpus"""
+
+    question: str = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_QUESTION_LENGTH,
+        description="The question, in the words the user asked it in",
+    )
+    hypothetical_passage: str = Field(
+        "",
+        max_length=MAX_HYPOTHETICAL_PASSAGE_LENGTH,
+        description=(
+            "The provision you would expect to find if the answer existed: "
+            "two or three sentences in the register of EU legislation "
+            "('shall', 'the controller'), with no invented article numbers. "
+            "It is matched against the corpus in place of the question and "
+            "roughly halves the passages the search misses. A wrong guess in "
+            "the right register still retrieves better than the question "
+            "alone, and it cannot make the search answer what it should not: "
+            "`question` alone decides whether anything comes back."
+        ),
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "question": "Do we have to let someone contest an automated rejection?",
+                "hypothetical_passage": (
+                    "The data subject shall have the right to obtain human "
+                    "intervention on the part of the controller, to express "
+                    "his or her point of view and to contest the decision."
+                ),
+            }
+        }
+    )
+
+
+class RegulationPassage(BaseModel):
+    """Schema for one retrieved passage of legislation"""
+
+    citation: str = Field(..., description="The provision this text comes from")
+    text: str = Field(..., description="The passage itself, verbatim")
+    source_url: str = Field(..., description="Where it was published")
+    retrieved_on: str = Field(..., description="When it was ingested, ISO date")
+
+
+class RegulationSearchResponse(BaseModel):
+    """Schema for the regulation search response"""
+
+    passages: list[RegulationPassage] = Field(
+        ..., description="Best first. Empty when the corpus does not answer."
+    )
+    note: str | None = Field(
+        None, description="Present only when `passages` is empty: why it is"
+    )

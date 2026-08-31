@@ -86,6 +86,12 @@ EVIDENTIAL_ANCHORS = [
 # wrong citations per fold set. Re-fit alongside MIN_SCORE_WITH_PASSAGE.
 MIN_ANCHOR_SCORE = -0.071
 
+# Bounds for the regulation search endpoint. A question is one sentence and a
+# hypothetical passage two or three; the embedding model truncates at 512
+# tokens anyway, so anything longer is silently discarded rather than searched.
+MAX_QUESTION_LENGTH = 500
+MAX_HYPOTHETICAL_PASSAGE_LENGTH = 2000
+
 # Model paths
 MODEL_PATH = MODELS_DIR / "best_tuned_model_xgboost.joblib"
 THRESHOLD_PATH = MODELS_DIR / "optimal_threshold.joblib"

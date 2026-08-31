@@ -1,10 +1,16 @@
 """Tests for API endpoints"""
 
+import threading
+import time
+
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
 from src.api import main
 from src.api.main import app
+from src.config import MAX_QUESTION_LENGTH
+from src.retriever import CorpusRetriever
 
 
 @pytest.fixture
@@ -219,3 +225,151 @@ class TestBatchPredictEndpoint:
         request_data = {"applications": [valid_application, invalid_app]}
         response = client.post("/predict/batch", json=request_data)
         assert response.status_code == 422
+
+
+# A retriever over three orthogonal chunks with a stub embedder: the endpoint
+# is exercised without the `genai` group or a model download, which is how CI
+# installs. The real model is covered in tests/test_retriever.py.
+CORPUS_CHUNKS = [
+    {
+        "chunk_id": "gdpr:art_22#1",
+        "citation": "GDPR, Article 22(1-4)",
+        "text": "automated individual decision-making",
+        "source_url": "https://example.invalid/gdpr",
+        "retrieved_on": "2026-08-17",
+    },
+    {
+        "chunk_id": "ai_act:anx_III#2",
+        "citation": "AI Act, ANNEX III",
+        "text": "creditworthiness of natural persons",
+        "source_url": "https://example.invalid/ai-act",
+        "retrieved_on": "2026-08-17",
+    },
+]
+
+
+@pytest.fixture
+def corpus(monkeypatch):
+    """Install a stub-embedded retriever and hand back its aim."""
+    vectors = np.eye(2, dtype=np.float32)
+
+    def aim_at(index):
+        retriever = CorpusRetriever(
+            CORPUS_CHUNKS, vectors, lambda query: vectors[index]
+        )
+        monkeypatch.setattr(main, "_retriever", retriever)
+        return retriever
+
+    yield aim_at
+    monkeypatch.setattr(main, "_retriever", None)
+
+
+@pytest.fixture
+def missing_corpus(monkeypatch):
+    """Make the corpus impossible to build, as in an image without it."""
+    monkeypatch.setattr(main, "_retriever", None)
+    monkeypatch.setattr(
+        main.CorpusRetriever,
+        "from_files",
+        classmethod(lambda cls: (_ for _ in ()).throw(FileNotFoundError("gone"))),
+    )
+
+
+class TestSearchRegulation:
+    """Test the regulation search endpoint"""
+
+    def test_returns_passages_with_their_citations(self, client, corpus):
+        """A hit comes back shaped as the schema, carrying its provenance"""
+        corpus(0)
+        response = client.post(
+            "/regulation/search", json={"question": "Can a decision be automated?"}
+        )
+        assert response.status_code == 200
+        passages = response.json()["passages"]
+        assert passages[0]["citation"] == "GDPR, Article 22(1-4)"
+        assert passages[0]["text"] == "automated individual decision-making"
+        assert passages[0]["source_url"] == "https://example.invalid/gdpr"
+        assert passages[0]["retrieved_on"] == "2026-08-17"
+
+    def test_the_ranking_score_never_leaves_the_service(self, client, corpus):
+        """`score` and `chunk_id` carry unit weights a reader would misread"""
+        corpus(0)
+        response = client.post(
+            "/regulation/search", json={"question": "Can a decision be automated?"}
+        )
+        assert set(response.json()["passages"][0]) == {
+            "citation",
+            "text",
+            "source_url",
+            "retrieved_on",
+        }
+
+    def test_nothing_close_enough_returns_an_empty_list_and_says_why(
+        self, client, corpus
+    ):
+        """Silence is an answer, and the payload has to name which silence"""
+        retriever = corpus(0)
+        # Orthogonal to every chunk: nothing can clear the threshold.
+        retriever.embed_query = lambda query: np.zeros(2, dtype=np.float32)
+        response = client.post(
+            "/regulation/search", json={"question": "What is our current AUC?"}
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["passages"] == []
+        assert "does not answer" in body["note"]
+
+    def test_a_missing_corpus_is_unavailable_rather_than_a_server_error(
+        self, client, missing_corpus
+    ):
+        """A deployment built without the corpus must say so, not throw 500"""
+        response = client.post(
+            "/regulation/search", json={"question": "Can a decision be automated?"}
+        )
+        assert response.status_code == 503
+        assert "not available" in response.json()["detail"]
+
+    def test_scoring_does_not_require_the_corpus(
+        self, client, valid_application, missing_corpus
+    ):
+        """The two halves of the service fail independently"""
+        assert client.get("/health").json()["model_loaded"] is True
+        assert client.post("/predict", json=valid_application).status_code == 200
+
+    def test_a_corpus_that_fails_to_load_does_not_take_startup_down(
+        self, missing_corpus
+    ):
+        """The warm-up runs at startup, so its failure must stay contained"""
+        with TestClient(app) as started:
+            assert started.get("/health").status_code == 200
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"question": ""},
+            {"question": "x" * (MAX_QUESTION_LENGTH + 1)},
+            {"question": "ok", "hypothetical_passage": "y" * 2001},
+            {},
+        ],
+    )
+    def test_the_bounds_are_enforced_at_the_edge(self, client, payload):
+        """Unbounded text reaches an embedding model that truncates silently"""
+        assert client.post("/regulation/search", json=payload).status_code == 422
+
+    def test_two_callers_at_once_load_the_corpus_once(self, monkeypatch):
+        """Each duplicate build costs another 240 MB of the task's 1 GB"""
+        monkeypatch.setattr(main, "_retriever", None)
+        builds = []
+
+        def slow_build(cls):
+            builds.append(1)
+            time.sleep(0.05)
+            return object()
+
+        monkeypatch.setattr(main.CorpusRetriever, "from_files", classmethod(slow_build))
+        threads = [threading.Thread(target=main.get_retriever) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert len(builds) == 1
