@@ -12,13 +12,13 @@ DATA_DIR = BASE_DIR / "data"
 CORPUS_DIR = BASE_DIR / "corpus"
 CORPUS_RAW_DIR = CORPUS_DIR / "raw"
 CORPUS_PATH = CORPUS_DIR / "eu_regulation.jsonl"
-# Vectors are regenerated rather than versioned: searching needs the embedding
-# model loaded anyway, to turn the query into a vector, so shipping the matrix
-# would save a clone nothing.
+# Versioned, unlike most generated artifacts: the deployed image is built from
+# a fresh checkout, so an unversioned index is simply absent from it. Rebuild
+# it with the corpus, never alone -- from_files() refuses a pair that disagree.
 CORPUS_INDEX_PATH = CORPUS_DIR / "embeddings.npz"
 # Hand-written evaluation set: questions with the units that should answer them.
-# Committed, unlike the vectors -- it is the labelled data any retrieval change
-# is measured against, not a build artifact.
+# The labelled data any retrieval change is measured against, so it belongs in
+# review like a test does.
 GOLDEN_SET_PATH = CORPUS_DIR / "golden_questions.jsonl"
 # Chunk size belongs to the embedding model, not to the text: the model reads a
 # fixed window and drops the rest, so changing model means re-chunking.

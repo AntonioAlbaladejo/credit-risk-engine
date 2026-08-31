@@ -44,8 +44,9 @@ Always `uv run ...`; never `pip install` into the environment. A new dependency 
 | [tests/](tests/) | pytest; `conftest.py` patches `joblib.load` via an **autouse** fixture |
 | [.github/workflows/](.github/workflows/) | `ci.yml` (ruff → pytest) · `cd.yml` (build → ECR → Fargate) |
 
-`models/`, `results/`, `data/` and `corpus/raw/` are generated. Only four `.joblib` artifacts are
-whitelisted in `.gitignore` because the Docker image needs them at build time.
+`models/`, `results/`, `data/` and `corpus/raw/` are generated. Four `.joblib` artifacts and
+`corpus/embeddings.npz` are whitelisted in `.gitignore` because the Docker image needs them at
+build time, and CD builds from a fresh checkout.
 
 ## Default coding mode: ponytail
 
@@ -114,7 +115,7 @@ even when the model artifacts are missing from the image. Infra identifiers (`EC
 ## Hard rules
 
 - **Never commit secrets.** `.env` is local-only; config changes go to `.env.example` with placeholders.
-- **Never commit datasets** or model binaries beyond the four whitelisted artifacts.
+- **Never commit datasets** or model binaries beyond the five whitelisted artifacts.
 - Do not `git commit`, `git push`, or touch AWS/ECR/ECS unless explicitly asked. Deploys are the
   user's call.
 - Do not rewrite notebooks wholesale — they are 0.4–1 MB of embedded outputs. Inspect targeted cells

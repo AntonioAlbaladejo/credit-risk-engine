@@ -219,9 +219,11 @@ data/*.zip
 # recuperación y hace falta sin red); el HTML de origen no, porque lo vuelve a
 # descargar scripts/ingest_corpus.py cuando falta.
 corpus/raw/
-# Los vectores se regeneran: buscar exige cargar el modelo igualmente, para
-# convertir la consulta en vector, así que versionar la matriz no ahorra nada.
+# El índice vectorial se versiona por la misma razón que los cuatro .joblib de
+# abajo: la imagen lo necesita en tiempo de build, y CD construye desde un
+# checkout limpio. Cualquier otro .npz sí es artefacto de compilación.
 corpus/*.npz
+!corpus/embeddings.npz
 
 # Modelos entrenados (Los archivos binarios de ML son pesados)
 models/*.pkl

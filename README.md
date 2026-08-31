@@ -318,9 +318,12 @@ path unchanged.
 uv run python -m scripts.ingest_corpus   # build corpus/ and its vector index
 ```
 
-`search_regulation` needs that index, which is generated rather than versioned; without it the tool
-raises an actionable error and the endpoint answers `503` while the scoring paths keep working,
-which is why the corpus and the scoring bundle load through separate lazy accessors.
+The index is versioned alongside the model artifacts, because CD builds the image from a fresh
+checkout and anything generated is simply absent from it. Rebuild it with the corpus and never on
+its own: `from_files()` compares chunk ids and refuses a pair that disagree, since an index built
+from a stale corpus serves the right-looking text under the wrong citation. Without an index the
+tool raises an actionable error and the endpoint answers `503` while the scoring paths keep
+working, which is why the corpus and the scoring bundle load through separate lazy accessors.
 [`.mcp.json`](.mcp.json) registers the server for any MCP client opened in this directory.
 
 **The same retrieval over HTTP.** `POST /regulation/search` returns the payload `search_regulation`
