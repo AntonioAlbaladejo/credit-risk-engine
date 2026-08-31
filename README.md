@@ -224,6 +224,7 @@ uv run python scripts/train.py --save clean-unweighted  # promote a run to model
 | `GET` | `/model/info` | Model type, threshold, and the 24 feature names in order |
 | `POST` | `/predict` | Score one application |
 | `POST` | `/predict/batch` | Score up to 100 applications in one call |
+| `POST` | `/regulation/search` | Passages of the GDPR and the AI Act bearing on a question, with citations |
 | `GET` | `/docs` · `/redoc` | OpenAPI documentation |
 
 ![The /predict request schema in the generated OpenAPI documentation](assets/swagger_predict.png)
@@ -318,9 +319,23 @@ uv run python -m scripts.ingest_corpus   # build corpus/ and its vector index
 ```
 
 `search_regulation` needs that index, which is generated rather than versioned; without it the tool
-raises an actionable error while the other two keep working, which is why the corpus and the scoring
-bundle load through separate lazy accessors. [`.mcp.json`](.mcp.json) registers the server for any
-MCP client opened in this directory.
+raises an actionable error and the endpoint answers `503` while the scoring paths keep working,
+which is why the corpus and the scoring bundle load through separate lazy accessors.
+[`.mcp.json`](.mcp.json) registers the server for any MCP client opened in this directory.
+
+**The same retrieval over HTTP.** `POST /regulation/search` returns the payload `search_regulation`
+returns, built by one method on the retriever that both callers share: the same text served under
+one citation on stdio and another over HTTP is the drift that indirection exists to prevent. The
+endpoint's docstring and field descriptions become its OpenAPI description, which is the REST
+equivalent of the tool description an MCP client reads — a weaker channel, because a caller is free
+not to read it.
+
+The embedding model is baked into the image at build time rather than fetched on first use, so an
+unreachable HuggingFace cannot keep a task from starting; CD asserts it by running the image with
+`--network none`. The corpus is warmed in a background thread at startup, because loading it costs
+12.6 s on the 0.5 vCPU the task is sized at and the first caller after a rollout would otherwise pay
+it. Retrieval adds 205 MB to the image and takes resident memory from 130 to 345 MB of the task's
+1024 MB, and on that hardware a search costs about what a prediction costs.
 
 ---
 
@@ -370,6 +385,10 @@ whole, giving the **24 features** the model uses. Raw data is not committed.
   two batches of hypothetical passages that agree question for question were nonetheless written
   by the same model family, so the writer sensitivity that is bounded here is between independent
   drafts, not between vendors.
+- **Nothing enforces how a caller uses the passages.** Over MCP the tool description travels with
+  every call. Over HTTP the same guidance lives only in the OpenAPI description, which a client can
+  ignore: the service can return citations, and a note saying so when it has nothing, but it cannot
+  make a caller quote them.
 - **CORS is wide open** (`allow_origins=["*"]`) and the Evidently report compares against a
   three-row hand-written reference file, so its drift numbers are not meaningful yet.
 
