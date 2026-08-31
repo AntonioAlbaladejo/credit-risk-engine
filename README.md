@@ -375,8 +375,15 @@ whole, giving the **24 features** the model uses. Raw data is not committed.
   that from 4 also refuses two questions that are plainly deontic — *what do we have to tell the
   customer* — because a bi-encoder reads their topic more strongly than their grammar. Fixing that
   means new anchors chosen against a question set nobody has read yet, not against these.
-  Faithfulness of a generated answer is not measured at all yet, so a cited passage is checkable but
-  an answer built on it is not.
+  Abstention matters less than that number suggests, though: 48 answers written from these payloads
+  by a model that was not told its faithfulness was being measured, then graded blind, put **13 of
+  the 13 wrong-citation cases** on record as flagging the gap rather than asserting the law, and no
+  claim invented a fact about this organisation. What the answers do get wrong is following a
+  cross-reference — a returned passage says *without prejudice to Article 78* and the model fills in
+  Article 78 from memory. Returning the referenced provision as well was built and measured, and
+  tripled overclaiming: with twice the material the model shifts from citing to interpreting. Both
+  measurements are one generator, one pass, on the fitting split, and graded by a model of the same
+  family as the one that wrote them.
 - **The retrieval numbers are fitted and read on question sets that no longer surprise it.** Every
   threshold here was chosen on the fitting split, but the held-out split has been read repeatedly
   across this work, and a set looked at many times stops being held out. Enlarging the set from 101
