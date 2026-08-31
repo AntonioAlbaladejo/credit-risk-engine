@@ -337,8 +337,9 @@ The embedding model is baked into the image at build time rather than fetched on
 unreachable HuggingFace cannot keep a task from starting; CD asserts it by running the image with
 `--network none`. The corpus is warmed in a background thread at startup, because loading it costs
 12.6 s on the 0.5 vCPU the task is sized at and the first caller after a rollout would otherwise pay
-it. Retrieval adds 205 MB to the image and takes resident memory from 130 to 345 MB of the task's
-1024 MB, and on that hardware a search costs about what a prediction costs.
+it. Retrieval adds 205 MB to the image, and resident memory settles at ~345 MB of the task's 1024
+against ~130 MB for the scoring model alone — flat across predictions and searches once warm. On
+that hardware a search costs about what a prediction costs.
 
 ---
 
