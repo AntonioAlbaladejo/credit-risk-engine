@@ -150,7 +150,7 @@ flowchart TB
     subgraph deploy["Delivery  ·  GitHub Actions"]
         direction LR
         ci["CI: ruff + pytest"]
-        img["Docker build<br/>+ live /health and /predict check"]
+        img["Docker build<br/>+ live endpoint and no-network check"]
         ecr[("Amazon ECR")]
         ecs["ECS Fargate<br/>eu-west-1"]
         ci --> img --> ecr --> ecs
@@ -165,9 +165,12 @@ flowchart TB
 ```
 
 CD triggers only on a successful CI run, builds the image, **starts the container and calls
-`/health` and `/predict` against it**, then pushes to ECR and deploys to Fargate. That container
-check matters more than it looks: the step it replaced ran `python -c "import src"`, which passes
-even when the model artifacts are missing from the image entirely.
+`/health`, `/predict` and `/regulation/search` against it**, then runs it once more with
+`--network none`, and only then pushes to ECR and deploys to Fargate. Those checks matter more than
+they look: the step they replaced ran `python -c "import src"`, which passes even when the model
+artifacts are missing from the image entirely. The offline run is there for the same reason one
+level down — the runner has network, so an image that had lost its baked embedding weights would
+download them on first use, pass every other check, and only fail on Fargate.
 
 ![The service running on ECS Fargate](assets/fargate_service.png)
 
@@ -203,13 +206,44 @@ curl -X POST http://localhost:8000/predict \
 }
 ```
 
-The 442 MB Docker image carries the model artifacts, so a fresh clone builds a container that serves
-real predictions and becomes healthy in about 5 seconds. Training tools — MLflow, Evidently, seaborn
-— and the CUDA build of XGBoost are dev-only dependencies, and none of them reach the runtime layer.
+The corpus and its vector index are versioned, so the same clone searches the legislation with no
+ingestion step. Write the passage you would expect the law to contain; it is matched in place of the
+question, and the question alone still decides whether anything comes back at all.
+
+```bash
+curl -X POST http://localhost:8000/regulation/search \
+  -H 'Content-Type: application/json' \
+  -d '{"question": "Do we have to let someone contest an automated rejection?",
+       "hypothetical_passage": "The data subject shall have the right to obtain human intervention on the part of the controller, to express his or her point of view and to contest the decision."}'
+```
+
+```json
+{
+  "passages": [
+    {
+      "citation": "GDPR, Article 22(1-4) - Automated individual decision-making, including profiling",
+      "text": "GDPR, Article 22(1-4) ...\n\n1. The data subject shall have the right not to be ...",
+      "source_url": "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32016R0679",
+      "retrieved_on": "2026-08-16"
+    }
+  ]
+}
+```
+
+Ask it something the legislation cannot answer — *what is our current model AUC?* — and
+`passages` comes back empty with a `note` saying which of the two refusals happened. Four more
+passages follow the one above, and shortening that hypothetical passage is enough to push Article
+22 out of first place, which is the clearest demonstration of what it buys.
+
+The 647 MB Docker image carries the model artifacts, the regulatory corpus with its vector index and
+the embedding weights, so a fresh clone builds a container that both scores applications and
+searches the legislation, healthy in about 5 seconds. Training tools — MLflow, Evidently,
+seaborn — and the CUDA build of XGBoost are dev-only dependencies, and none reach the runtime
+layer.
 
 ```bash
 docker build -t credit-risk-engine:local . && docker run --rm -p 8000:8000 credit-risk-engine:local
-uv run pytest                                           # 172 tests, ~6s
+uv run pytest                                           # 183 tests, ~6s
 uv run python scripts/train.py --baselines              # reproduce the comparison tables
 uv run python scripts/train.py --save clean-unweighted  # promote a run to models/
 ```
