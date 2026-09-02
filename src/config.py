@@ -92,6 +92,13 @@ MIN_ANCHOR_SCORE = -0.071
 MAX_QUESTION_LENGTH = 500
 MAX_HYPOTHETICAL_PASSAGE_LENGTH = 2000
 
+# Rate limit for the public API, per client IP. A regulation search costs about
+# 0.3 s of the task's half vCPU, so 60 a minute caps one caller near a third of
+# the CPU a minute holds -- generous for a human, and not enough to starve the
+# scoring path. Stops a careless client, not a flood spread across addresses.
+RATE_LIMIT_REQUESTS = 60
+RATE_LIMIT_WINDOW_SECONDS = 60
+
 # Model paths
 MODEL_PATH = MODELS_DIR / "best_tuned_model_xgboost.joblib"
 THRESHOLD_PATH = MODELS_DIR / "optimal_threshold.joblib"

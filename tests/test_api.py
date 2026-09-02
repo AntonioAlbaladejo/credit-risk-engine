@@ -9,8 +9,23 @@ from fastapi.testclient import TestClient
 
 from src.api import main
 from src.api.main import app
-from src.config import MAX_QUESTION_LENGTH
+from src.config import (
+    MAX_QUESTION_LENGTH,
+    RATE_LIMIT_REQUESTS,
+    RATE_LIMIT_WINDOW_SECONDS,
+)
 from src.retriever import CorpusRetriever
+
+
+@pytest.fixture(autouse=True)
+def fresh_rate_limit(monkeypatch):
+    """Give every test the full budget.
+
+    The limiter keeps one counter for the whole process, so without this the
+    suite spends its own allowance and later tests start seeing 429s.
+    """
+    monkeypatch.setattr(main, "_rate_counts", {})
+    monkeypatch.setattr(main, "_rate_window_start", time.monotonic())
 
 
 @pytest.fixture
@@ -373,3 +388,40 @@ class TestSearchRegulation:
         for thread in threads:
             thread.join()
         assert len(builds) == 1
+
+
+class TestRateLimit:
+    """Test the per-IP request budget"""
+
+    def test_a_caller_over_the_budget_is_refused_with_a_retry_hint(self, client):
+        """One caller must not be able to spend the task's CPU on searches"""
+        for _ in range(RATE_LIMIT_REQUESTS):
+            assert client.get("/").status_code == 200
+        refused = client.get("/")
+        assert refused.status_code == 429
+        assert 0 < int(refused.headers["Retry-After"]) <= RATE_LIMIT_WINDOW_SECONDS + 1
+
+    def test_health_is_never_limited(self, client):
+        """ECS reads /health to decide the task lives; starving it restarts it"""
+        for _ in range(RATE_LIMIT_REQUESTS + 5):
+            client.get("/")
+        assert client.get("/health").status_code == 200
+
+    def test_each_caller_gets_its_own_budget(self):
+        """A busy client must not lock everyone else out"""
+        noisy = TestClient(app, client=("10.0.0.1", 5000))
+        quiet = TestClient(app, client=("10.0.0.2", 5000))
+        for _ in range(RATE_LIMIT_REQUESTS + 1):
+            noisy.get("/")
+        assert noisy.get("/").status_code == 429
+        assert quiet.get("/").status_code == 200
+
+    def test_the_budget_comes_back_when_the_window_rolls(self, client, monkeypatch):
+        """A refusal is for a minute, not for the life of the task"""
+        for _ in range(RATE_LIMIT_REQUESTS + 1):
+            client.get("/")
+        assert client.get("/").status_code == 429
+        monkeypatch.setattr(
+            main, "_rate_window_start", time.monotonic() - RATE_LIMIT_WINDOW_SECONDS - 1
+        )
+        assert client.get("/").status_code == 200

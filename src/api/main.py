@@ -1,11 +1,13 @@
 import asyncio
 import logging
 import threading
+import time
 from contextlib import asynccontextmanager
 from enum import Enum
 
-from fastapi import FastAPI, HTTPException, Response, status
+from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from src.api.schemas import (
@@ -26,6 +28,8 @@ from src.config import (
     LOG_LEVEL,
     MODEL_PATH,
     PREPROCESSOR_PATH,
+    RATE_LIMIT_REQUESTS,
+    RATE_LIMIT_WINDOW_SECONDS,
     THRESHOLD_PATH,
 )
 from src.predictor import CreditRiskPredictor
@@ -92,6 +96,56 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# One window shared by every caller: when it rolls the whole table is dropped,
+# which bounds memory to a window's worth of distinct addresses. The known cost
+# is a burst across the boundary, twice the limit in a moment; a sliding window
+# smooths that in exchange for per-caller bookkeeping nobody here needs.
+_rate_window_start = 0.0
+_rate_counts: dict[str, int] = {}
+
+
+@app.middleware("http")
+async def rate_limit(request: Request, call_next):
+    """Cap requests per client IP so one caller cannot take the task's CPU.
+
+    No lock: the middleware is async and the table is only touched from the
+    event loop, between awaits. Two ceilings worth knowing -- the count is per
+    process, so `--workers N` multiplies the limit by N, and `request.client`
+    is the real caller only while nothing proxies in front. Behind a load
+    balancer every request arrives with its address, and the limit becomes one
+    global budget unless it starts reading `X-Forwarded-For`.
+
+    Args:
+        request: The incoming request.
+        call_next: The rest of the stack.
+
+    Returns:
+        The downstream response, or 429 with `Retry-After` once over budget.
+    """
+    global _rate_window_start
+    # Health checks are never limited: ECS reads /health to decide whether the
+    # task lives, and starving it would turn a busy minute into a restart.
+    if request.url.path != "/health":
+        now = time.monotonic()
+        if now - _rate_window_start >= RATE_LIMIT_WINDOW_SECONDS:
+            _rate_window_start = now
+            _rate_counts.clear()
+        caller = request.client.host if request.client else "unknown"
+        _rate_counts[caller] = _rate_counts.get(caller, 0) + 1
+        if _rate_counts[caller] > RATE_LIMIT_REQUESTS:
+            logger.warning(f"Rate limit hit by {caller}")
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={"detail": "Too many requests."},
+                headers={
+                    "Retry-After": str(
+                        int(RATE_LIMIT_WINDOW_SECONDS - (now - _rate_window_start)) + 1
+                    )
+                },
+            )
+    return await call_next(request)
+
 
 # Load model and preprocessor at startup
 _predictor: CreditRiskPredictor | None = None
