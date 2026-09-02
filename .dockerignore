@@ -40,6 +40,7 @@ corpus/raw/
 # Tests, docs and CI config (not needed at runtime)
 tests/
 docs/
+infra/
 assets/
 scripts/
 .github/
