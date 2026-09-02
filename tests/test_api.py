@@ -425,3 +425,20 @@ class TestRateLimit:
             main, "_rate_window_start", time.monotonic() - RATE_LIMIT_WINDOW_SECONDS - 1
         )
         assert client.get("/").status_code == 200
+
+
+class TestCORS:
+    """Test the cross-origin policy"""
+
+    def test_no_origin_gets_a_credentialed_grant(self, client):
+        """An anonymous public API must never hand out a cookie-bearing grant.
+
+        With `allow_credentials=True` this comes back as the caller's own
+        origin plus `allow-credentials: true`, which is a grant to every site
+        that asks.
+        """
+        response = client.get("/health", headers={"Origin": "https://evil.example"})
+
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == "*"
+        assert "access-control-allow-credentials" not in response.headers

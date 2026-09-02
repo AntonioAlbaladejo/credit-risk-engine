@@ -88,11 +88,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS - TODO Configure according to security requirements (currently allows all origins, methods, and headers for simplicity)
+# Credentials stay off: with them on, Starlette reflects the caller's Origin
+# back instead of "*", handing every site on the internet a cookie-bearing
+# grant. Nothing here reads a cookie or an Authorization header.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
