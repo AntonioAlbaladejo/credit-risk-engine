@@ -178,7 +178,8 @@ download them on first use, pass every other check, and only fail on Fargate.
 
 ## Running it
 
-Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installation/).
+Needs [uv](https://docs.astral.sh/uv/getting-started/installation/); it reads `.python-version`
+and fetches Python 3.11, the same version the image runs.
 
 ```bash
 git clone https://github.com/AntonioAlbaladejo/credit-risk-engine.git
