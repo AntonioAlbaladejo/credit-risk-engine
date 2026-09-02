@@ -208,44 +208,44 @@ __marimo__/
 
 # --- DATA SCIENCE EXTRAS ---
 
-# Datasets (Nunca subas datos crudos o pesados)
+# Datasets (never commit raw or heavy data)
 data/*.csv
 data/*.xlsx
 data/*.parquet
 data/*.sql
 data/*.zip
 
-# Corpus normativo: el JSONL troceado sí se versiona (es la entrada de la
-# recuperación y hace falta sin red); el HTML de origen no, porque lo vuelve a
-# descargar scripts/ingest_corpus.py cuando falta.
+# Regulatory corpus: the chunked JSONL is versioned (it is the retrieval
+# input and is needed offline); the source HTML is not, because
+# scripts/ingest_corpus.py downloads it again when missing.
 corpus/raw/
-# El índice vectorial se versiona por la misma razón que los cuatro .joblib de
-# abajo: la imagen lo necesita en tiempo de build, y CD construye desde un
-# checkout limpio. Cualquier otro .npz sí es artefacto de compilación.
+# The vector index is versioned for the same reason as the four .joblib
+# files below: the image needs it at build time, and CD builds from a clean
+# checkout. Any other .npz is a build artifact.
 corpus/*.npz
 !corpus/embeddings.npz
 
-# Modelos entrenados (Los archivos binarios de ML son pesados)
+# Trained models (ML binaries are heavy)
 models/*.pkl
 models/*.joblib
 models/*.onnx
 models/*.h5
 
-# Excepción con los cuatro artefactos que sirve la API si se versionan
+# Exception for the four artifacts the API serves, which are versioned
 !models/best_tuned_model_xgboost.joblib
 !models/preprocessor.joblib
 !models/feature_names.joblib
 !models/optimal_threshold.joblib
 
-# Resultados
+# Results
 results/*.csv
 
-# Excepción con las tablas que cita el README, para que sean verificables
+# Exception for the tables the README cites, so they stay verifiable
 !results/baseline_comparison.csv
 !results/leakage_and_weighting_comparison.csv
 !results/threshold_optimization.csv
 
-# Variables de entorno (Credenciales de APIs o BDs)
+# Environment variables (API or database credentials)
 .env
 .env.local
 .env.*.local
@@ -254,11 +254,11 @@ results/*.csv
 .ipynb_checkpoints/
 */.ipynb_checkpoints/
 
-# Reportes generados (HTML de perfiles de datos, etc.)
+# Generated reports (data profiling HTML, etc.)
 reports/*.html
 reports/*.pdf
 
-# Settings de editores (VSCode, Claude, etc.)
+# Editor settings (VSCode, Claude, etc.)
 .vscode/settings.json
 .claude/settings.local.json
 
