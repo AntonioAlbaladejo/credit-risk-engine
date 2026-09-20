@@ -37,9 +37,9 @@ Four decisions shape everything below:
   without retraining. [↓](#no-smote-and-no-class-weighting-either)
 - **Training and serving share one feature implementation**, because the two copies that preceded it
   had already drifted apart in silence. [↓](#training-and-serving-share-one-implementation)
-- **The retrieval is measured on when it stays quiet**, not only on what it finds: a third of the 161
-  hand-labelled questions are ones the corpus cannot answer.
-  [↓](#llm-surface-explanations-and-regulatory-grounding)
+- **Nothing ships on an unmeasured improvement.** Seven retrieval variants were built, measured and
+  dropped, one of them after it had already been written up.
+  [↓](#what-was-built-measured-and-dropped)
 
 ---
 
@@ -101,14 +101,14 @@ almost nothing, dropping the weighting moves it a long way.
 At 21.5% positives (3.64:1) the imbalance is mild. Three SMOTE variants all degraded ROC-AUC and
 PR-AUC, and 15% of the synthetic rows carried a `loan_grade` block that was not a valid one-hot —
 interpolating over encoded columns invents categories that do not exist. Once the threshold is tuned
-every arm lands between 0.8370 and 0.8447 F1: what oversampling promises, threshold tuning delivers.
+every arm lands between 0.8370 and 0.8447 F1: what oversampling promises, tuning already delivers.
 
 ![Calibration by decile, with and without class weighting](assets/calibration.png)
 
 Class weighting was then dropped for calibration. Same algorithm, features and split; only
 `scale_pos_weight` differs. The weighted model over-predicts risk — calibration error 0.0893 against
-0.0082, mean prediction 0.3035 against a true rate of 0.2154, optimal threshold dragged to 0.70 — and
-buys 0.0003 ROC-AUC for it. Unweighted, no decile deviates more than 2.5 points and Brier improves 24%.
+0.0082, mean prediction 0.3035 against a true rate of 0.2154 — and buys 0.0003 ROC-AUC for it.
+Unweighted, no decile deviates more than 2.5 points and Brier improves 24%.
 
 ### The threshold is a tuned artifact, not 0.5
 
@@ -124,11 +124,10 @@ and 0.7, so the cut-off can move on business grounds without collapsing the mode
 `create_derived_features()` in [`src/preprocessing.py`](src/preprocessing.py) is imported by both the
 training script and the serving path. It existed twice before, and the copies had already drifted —
 different zero-division handling, different bucket dtypes. That is train/serve skew: no error, no
-failing test, just quietly wrong predictions.
-
-Preprocessor, feature list, model and threshold are likewise one versioned bundle, produced by a
-single run and loaded together. MLflow lookup is opt-in, so an unreachable tracking server degrades to
-the local artifacts instead of blocking startup for 247 seconds of retry backoff.
+failing test, just quietly wrong predictions. Preprocessor, feature list, model and threshold are
+likewise one versioned bundle, produced by a single run and loaded together. MLflow lookup is opt-in,
+so an unreachable tracking server degrades to the local artifacts instead of blocking startup for 247
+seconds of retry backoff.
 
 ---
 
@@ -186,8 +185,8 @@ CD triggers only on a successful CI run, builds the image, **starts the containe
 `/predict` and `/regulation/search` against it**, then runs it once more with `--network none`, and
 only then pushes to ECR and deploys. The step those checks replaced ran `python -c "import src"`,
 which passes even when the model artifacts are missing from the image entirely; the offline run
-catches the same failure one level down, since an image that had lost its baked embedding weights
-would quietly download them on a runner that has network and fail only on Fargate.
+catches the same failure one level down, since a runner has network and an image that had lost its
+baked embedding weights would quietly download them and fail only on Fargate.
 
 ![The service running on ECS Fargate](assets/fargate_service.png)
 
@@ -195,8 +194,7 @@ Fargate gives the task a fresh public IP every time it replaces it, so an EventB
 Task State Change` calls a Lambda that writes the new address to a DuckDNS record
 ([`infra/dns_updater/`](infra/dns_updater/)) — on the ECS event rather than as a step in `cd.yml`,
 because the pipeline only ever sees the replacements a deployment causes. An Elastic IP is the obvious
-move and cannot be attached to a Fargate task at all. No live URL appears here: `docker run` below
-starts the whole system and does not expire.
+move and cannot be attached to a Fargate task at all.
 
 ---
 
@@ -243,25 +241,19 @@ curl -X POST http://localhost:8000/regulation/search \
 ```
 
 ```json
-{
-  "passages": [
-    {
-      "citation": "GDPR, Article 22(1-4) - Automated individual decision-making, including profiling",
-      "text": "GDPR, Article 22(1-4) ...\n\n1. The data subject shall have the right not to be ...",
-      "source_url": "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32016R0679",
-      "retrieved_on": "2026-08-16"
-    }
-  ]
-}
+{"passages": [{
+  "citation": "GDPR, Article 22(1-4) - Automated individual decision-making, including profiling",
+  "text": "1. The data subject shall have the right not to be subject to a decision ...",
+  "source_url": "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32016R0679",
+  "retrieved_on": "2026-08-16"}]}
 ```
 
 Four more passages follow. Ask something the legislation cannot answer — *what is our current model
 AUC?* — and `passages` comes back empty with a `note` saying which of the two refusals happened.
 
 The 647 MB image carries the model artifacts, the corpus with its index and the embedding weights, so
-a fresh clone builds a container that both scores applications and searches the legislation, healthy
-in about 5 seconds. MLflow, Evidently, seaborn and the CUDA build of XGBoost are dev-only and never
-reach the runtime layer.
+a fresh clone builds a container that both scores applications and searches the legislation. MLflow,
+Evidently, seaborn and the CUDA build of XGBoost are dev-only and never reach the runtime layer.
 
 ```bash
 docker build -t credit-risk-engine:local . && docker run --rm -p 8000:8000 credit-risk-engine:local
@@ -283,23 +275,17 @@ uv run python scripts/train.py --save clean-unweighted  # promote a run to model
 | `POST` | `/regulation/search` | Passages of the GDPR and the AI Act bearing on a question, with citations |
 | `GET` | `/` · `/docs` · `/redoc` | Service metadata and OpenAPI documentation |
 
-![The /predict request schema in the generated OpenAPI documentation](assets/swagger_predict.png)
-
 Pydantic v2 schemas are the contract and FastAPI generates the documentation from them, so it cannot
 drift from what the service accepts. Bounds live in [`src/config.py`](src/config.py) to match the
 ranges seen in training: `loan_int_rate` has a floor of 1.0 rather than 0 because training data runs
 5.42 to 23.22 in percent units, so a caller sending a fraction (`0.08` for 8%) gets a `422` instead of
-a value silently scaled 3.5 standard deviations below anything the model has seen. `/health` returns
-`503` rather than `200` with an `unhealthy` body because a load balancer reads the status code.
+a value silently scaled 3.5 standard deviations below anything the model has seen.
 
-**Every route but `/health` is capped at 60 requests a minute per client address**, answered with
-`429` and a `Retry-After`; a regulation search costs about 0.3 s of the task's half vCPU, so that
-holds one caller near a third of the CPU a minute contains. `/health` is exempt because ECS reads it
-to decide whether the task lives. The window is fixed rather than sliding — a burst of twice the limit
-across the boundary, in exchange for keeping no per-caller history — and the middleware documents its
-two ceilings: the count is per process, and behind a proxy every request arrives with the balancer's
-address. It stops a careless client, not a distributed flood; that is a WAF's job, and a WAF attaches
-to a load balancer this architecture does not have.
+**Every route but `/health` is capped at 60 requests a minute per client address**, answered with `429`
+and a `Retry-After`; a regulation search costs about 0.3 s of the task's half vCPU, so that holds one
+caller near a third of the CPU a minute contains. `/health` is exempt because ECS reads it to decide
+whether the task lives. It stops a careless client, not a distributed flood — that is a WAF's job, and
+a WAF attaches to a load balancer this architecture does not have.
 
 ---
 
@@ -318,68 +304,97 @@ surface rather than developer documentation.
 
 **Reason codes, not raw SHAP.** [`src/explainer.py`](src/explainer.py) runs exact TreeSHAP against the
 native booster and groups per-feature contributions into named reasons. The client receives derived
-reasons, never the raw application, and the tool description states that contributions are log-odds:
-they add up, but they are not shares of the probability.
+reasons, never the raw application, so no personal data reaches an external model and the LLM only
+verbalises figures already computed. The tool description states that contributions are log-odds: they
+add up, but they are not shares of the probability.
 
-**The corpus.** The GDPR and the AI Act from EUR-Lex, split on their ELI anchors into **759 passages**
-sized to the embedding model's 512-token window, each carrying its citation, source URL and
-consultation date. Search is an exact cosine scan over `BAAI/bge-small-en-v1.5`; recitals are demoted
-relative to articles, because explanatory prose reads like a question and outranks the provision that
-binds. Five alternatives were measured and dropped: a BM25 hybrid, a cross-encoder reranker, indexing
-headings separately, merging an internal policy document, and four larger embedding models.
+**The corpus.** The GDPR and the AI Act from EUR-Lex, split on their own legal structure — article,
+recital, annex — rather than on a fixed window, and budgeted with the real tokenizer: **759 passages,
+none truncated**, each carrying its citation, source URL and consultation date. Search is an exact
+cosine scan over `BAAI/bge-small-en-v1.5`; recitals are demoted relative to articles, because
+explanatory prose reads like a question and outranks the provision that binds.
 
-**Knowing when to stay quiet.** Below a tuned similarity threshold the tool returns **no passages at
-all**, and says so. Most questions put to a system like this are about the product, the model or the
-business, and a provision cited for one of those reads as grounding while being none. The measure is a
-hand-labelled set of **161 questions**, 94 fitting and 67 held out, written like what the tool
-receives: terse fragments, paragraph-long rambles, false premises, banking jargon, and a third the
-corpus genuinely cannot answer — each with a note justifying that label, since an empty label is a
-claim about the corpus. The plain path reaches **72.0% hit-rate@5** there and handles 39 of 67
-correctly.
+### Two signals, because ranking and abstention are different problems
 
-**Two signals, because ranking and abstention are different problems.** Questions arrive in business
-language the legislation never uses — *postal code*, *AUC*, *vendor* appear nowhere in the corpus — so
-`search_regulation` accepts an optional `hypothetical_passage`: the provision the calling model expects
-to find, written in the register of the law. Matching passage against passage lifts hit-rate@5 from
-72.0% to **98.0%**, and survives a change of writer: a second batch of 161 passages, written with no
-sight of the corpus, the retriever or the first batch, finds the same 49 of the 50 answerable
-questions. The invented passage takes the ranking and the real question keeps the veto — it ranks
-groundable questions slightly worse (AUC 0.71 against 0.77) and still cuts better, because every
-threshold fitted to the passage serves more wrong citations, 23.6 against 19.1 per cross-validated
-fold. Ordering well and cutting well are not the same property.
+```mermaid
+flowchart LR
+    q["Question<br/><i>business language</i>"]
+    hp["Hypothetical passage<br/><i>written by the calling model</i>"]
+    rank["Rank<br/>cosine over 759 passages"]
+    veto{"Veto<br/>score · modality"}
+    ans["5 passages<br/>with citations"]
+    quiet["No passages<br/>+ a note saying why"]
 
-**A third arm vetoes on modality, not similarity.** The corpus states what the law requires, so it
-answers *must we do X* and structurally cannot answer *did we do X* — for which it returns the
-provision governing X, a match every relevance model endorses, a cross-encoder included. The signal is
-grammatical, not semantic: similarity to three deontic prototypes minus similarity to three evidential
-ones, which beats the corpus score alone on 7 cross-validated seeds of 8. The pair handles **48 of 67
-held-out questions correctly against 39** for the plain path, answering 41 right where the plain path
-answers 21 and serving two fewer wrong citations. A fourth arm that answered whenever both rankings
-agreed won on the earlier, smaller question set, then lost 7 folds of 8 under cross-validation and was
-dropped. The hypothetical passage is optional throughout.
+    q --> hp --> rank --> veto
+    q -.->|"keeps the veto"| veto
+    veto -->|"groundable<br/>and deontic"| ans
+    veto -->|"otherwise"| quiet
+```
 
-**One payload, two transports.** `POST /regulation/search` returns what `search_regulation` returns,
-built by one method both callers share: the same text served under one citation on stdio and another
-over HTTP is the drift indirection exists to prevent. The docstring and field descriptions become the
-OpenAPI description — the REST equivalent of a tool description, and a weaker channel, since a caller
-is free not to read it.
+Questions arrive in business language the legislation never uses — *postal code*, *AUC*, *vendor*
+appear nowhere in the corpus — so `search_regulation` accepts an optional `hypothetical_passage`: the
+provision the calling model expects to find, written in the register of the law. Matching passage
+against passage lifts hit-rate@5 on the held-out split from **72.0% to 98.0%**, and survives a change
+of writer: a second batch of 161 passages, written with no sight of the corpus, the retriever or the
+first batch, finds the same 49 of the 50 answerable questions.
 
-**The index is versioned alongside the model**, because CD builds from a fresh checkout and anything
-generated is absent from it. Rebuild it with the corpus, never alone: `from_files()` compares chunk
-ids and refuses a mismatched pair, since an index built from a stale corpus serves right-looking text
-under the wrong citation. Without one the tool raises an actionable error and the endpoint answers
-`503` while scoring keeps working, which is why corpus and bundle load through separate lazy
-accessors. [`.mcp.json`](.mcp.json) registers the server for any MCP client opened in this directory.
+The invented passage takes the ranking and the real question keeps the veto: it ranks groundable
+questions slightly worse (AUC 0.71 against 0.77) and still cuts better, because every threshold fitted
+to the passage serves more wrong citations — 23.6 against 19.1 per fold.
+
+### Staying quiet is a measured outcome, not a fallback
+
+Below a tuned similarity threshold the tool returns **no passages at all**, and says so: most questions
+put to a system like this are about the product, the model or the business, and a provision cited for
+one of those reads as grounding while being none. The measure is a hand-labelled set of **161
+questions**, 94 fitting and 67 held out, written like what the tool receives — terse fragments,
+paragraph-long rambles, false premises, banking jargon, and a third the corpus cannot answer, each with
+a note justifying that label.
+
+A second veto reads the **grammar** of the question rather than its meaning. The corpus states what the
+law requires, so it answers *must we do X* and structurally cannot answer *did we do X* — for which it
+returns the provision governing X, a match every relevance model endorses, a cross-encoder included.
+Similarity to three deontic prototypes minus similarity to three evidential ones separates them, and
+beats the corpus score alone on 7 cross-validated seeds of 8. End to end, the pair handles **48 of 67
+held-out questions correctly against 39** for the plain path: 41 right where the plain path gets 21,
+and two fewer wrong citations doing it.
+
+### What was built, measured and dropped
+
+Every row was implemented and ablated against the golden set with the threshold re-fitted on the
+fitting split — judging a variant at another variant's threshold is the unfair comparison of choice.
+
+| Variant | Why it was dropped |
+|---|---|
+| **BM25 hybrid** (~45 lines, no new dependency) | Loses at every weighting — 47.8% dense against 34.8% for the best RRF blend — and degrades monotonically in the BM25 weight. The words that discriminate in real questions (*postal*, *auc*, *vendor*, *revalidated*) are not in the corpus at all |
+| **Cross-encoder reranker** (3 models) | 1 GB and 5.8 s per query against microseconds, and it *loses to the bare cosine on abstention* (24/31 against 25/31) — the one thing it was brought in for |
+| **Separate heading vector** | No blend improves. Six words and four hundred words land in different regions of the space, so the max compares incomparable scales; only 380 of 759 chunks have a heading |
+| **Widening the corpus** with an internal credit policy | Degrades: 15 chunks, 1.9% of the corpus, take 28.7% of the top-5; hit-rate 63.2 → 59.2% and wrong citations 9 → 20. Internal policy is evidence of compliance, never the source of the obligation |
+| **A larger embedding model** (5 encoders) | None beats `bge-small` on test, scale is not monotonic, the three 1024-dim models make abstention *worse*, and they cost 15-37× per query |
+| **A second veto** on ranking agreement | 35/42 on the earlier, smaller question set — then 5 folds × 8 seeds: loses 7, ties 1, wins 0. An artifact of a small, uniform set, retracted before it was committed |
+| **Expanding cross-references** | Tripled overclaiming: with twice the material the model shifts from citing to interpreting |
+
+### One payload, two transports
+
+`POST /regulation/search` returns what `search_regulation` returns, built by one method both callers
+share: the same text served under one citation on stdio and another over HTTP is the drift indirection
+exists to prevent. The docstring and field descriptions become the OpenAPI description — the REST
+equivalent of a tool description, and a weaker channel, since a caller is free not to read it.
+
+The index is versioned alongside the model, because CD builds from a fresh checkout and anything
+generated is absent from it. Rebuild it with the corpus, never alone: `from_files()` compares chunk ids
+and refuses a mismatched pair, since an index built from a stale corpus serves right-looking text under
+the wrong citation. [`.mcp.json`](.mcp.json) registers the server for any MCP client opened here.
 
 ```bash
 uv run python -m scripts.ingest_corpus   # rebuild corpus/ and its vector index
 ```
 
-**What retrieval costs.** The embedding model is baked into the image rather than fetched on first
-use, so an unreachable HuggingFace cannot keep a task from starting; CD asserts it with
-`--network none`. The corpus warms in a background thread at startup, since loading it costs 12.6 s on
-the task's 0.5 vCPU. Retrieval adds 205 MB to the image, and resident memory settles at ~345 MB of the
-task's 1024 against ~130 MB for scoring alone. A search costs about what a prediction costs.
+The embedding model is baked into the image rather than fetched on first use, so an unreachable
+HuggingFace cannot keep a task from starting. The corpus warms in a background thread at startup, since
+loading it costs 12.6 s on the task's 0.5 vCPU. Retrieval adds 205 MB to the image and resident memory
+settles at ~345 MB of the task's 1024, against ~130 MB for scoring alone; a search costs about what a
+prediction costs.
 
 ---
 
@@ -392,7 +407,7 @@ task's 1024 against ~130 MB for scoring alone. A search costs about what a predi
 | Serving | FastAPI, Pydantic v2, uvicorn |
 | LLM surface | MCP SDK, SHAP, fastembed |
 | Packaging · quality | uv, Docker multi-stage, pytest, ruff |
-| Delivery | GitHub Actions, Amazon ECR, ECS Fargate (eu-west-1) |
+| Delivery | GitHub Actions, Amazon ECR, ECS Fargate (eu-west-1), Lambda, EventBridge |
 
 The [Credit Risk Dataset](https://www.kaggle.com/datasets/laotse/credit-risk-dataset) from Kaggle:
 32,581 loan applications, 11 features, binary `loan_status` target. Cleaning leaves **31,679 rows at a
@@ -407,38 +422,31 @@ the **24 features** the model uses. Raw data is not committed.
 
 - **Most of the suite mocks `joblib.load`** with an autouse fixture, so it exercises the code paths
   rather than the shipped model. `tests/test_inference_real.py` opts out and pins six applications to
-  the probabilities the real bundle assigns them, which catches a reordered feature list or a
-  preprocessor from a different run; the rest proves nothing about the artifacts.
+  the probabilities the real bundle assigns them; the rest proves nothing about the artifacts.
 - **Grade F is under-predicted** by 0.068 on the 51 test rows that carry it. Restoring the one-hot
   block stopped F and G being scored as B, but 7 sparse dummies share no strength between neighbouring
   grades; an ordinal encoding with `monotone_constraints` is the follow-up.
-- **The regulatory search knows when to answer far better than when to stay quiet.** Of the 18
-  held-out questions it should refuse, it refuses 7. The modality arm that lifted that from 4 also
-  refuses two questions that are plainly deontic — *what do we have to tell the customer* — because a
-  bi-encoder reads their topic more strongly than their grammar; fixing it means new anchors chosen
-  against a question set nobody has read yet.
-- **A wrong citation gets flagged by the calling model; a missing cross-reference does not.** 48
-  answers written from these payloads, graded blind, put **13 of the 13 wrong-citation cases** on
-  record as flagging the gap rather than asserting the law, and no claim invented a fact about this
-  organisation. What they do get wrong is following a reference: a passage says *without prejudice to
-  Article 78* and the model fills in Article 78 from memory. Returning the referenced provision too
-  was built and measured, and tripled overclaiming. One generator, one pass, on the fitting split,
-  graded by a model of the same family.
+- **The retrieval knows when to answer far better than when to stay quiet.** Of the 18 held-out
+  questions it should refuse, it refuses 7. The modality veto that lifted that from 4 also refuses two
+  questions that are plainly deontic, because a bi-encoder reads their topic more strongly than their
+  grammar.
+- **Wrong citations get flagged by the calling model; missing cross-references do not.** 48 answers
+  graded blind put **13 of the 13 wrong-citation cases** on record as flagging the gap rather than
+  asserting the law. What they get wrong is following a reference: a passage says *without prejudice
+  to Article 78* and the model fills in Article 78 from memory. One generator, one pass, graded by a
+  model of the same family.
 - **The retrieval numbers are read on question sets that no longer surprise it.** Thresholds were
   fitted on the fitting split, but the held-out split has been read repeatedly, and a set looked at
-  many times stops being held out. Growing it from 101 to 161 questions already overturned one result
-  that had looked solid on the smaller set.
+  many times stops being held out.
 - **Nothing enforces how a caller uses the passages.** Over MCP the tool description travels with every
   call; over HTTP it lives only in the OpenAPI description, which a client can ignore.
-- **The deployed service is only lightly guarded.** `allow_origins` is `["*"]` — paired with
-  `allow_credentials=False`, which is what keeps that wildcard legal — and the 60-per-minute cap is the
-  only thing in front of the half vCPU. It serves plain HTTP on port 8000; a certificate needs a domain
-  and something to terminate TLS.
+- **The deployed service is only lightly guarded.** `allow_origins` is `["*"]` — with
+  `allow_credentials=False`, which keeps that wildcard legal — and the 60-per-minute cap is the only
+  thing in front of the half vCPU. It serves plain HTTP; a certificate needs a domain and something to
+  terminate TLS.
 - **The Evidently report does not measure anything yet.** It compares the full feature table against a
-  three-row hand-written file whose 17 columns come from a pipeline that no longer exists, then
-  resolves the target to a scaled feature and truncates it to zero, so its drift is noise. The
-  leak-free splits it should read — train as reference, test as current, `loan_status` as the label —
-  have existed since the retrain.
+  three-row hand-written file from a pipeline that no longer exists, then resolves the target to a
+  scaled feature and truncates it to zero. The leak-free splits it should read already exist.
 
 ---
 
