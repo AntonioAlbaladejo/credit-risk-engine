@@ -275,6 +275,15 @@ uv run python scripts/train.py --save clean-unweighted  # promote a run to model
 | `POST` | `/regulation/search` | Passages of the GDPR and the AI Act bearing on a question, with citations |
 | `GET` | `/` · `/docs` · `/redoc` | Service metadata and OpenAPI documentation |
 
+![The /predict request body in the generated OpenAPI documentation](assets/swagger_predict.png)
+
+![The 200 response returned by the running service](assets/swagger_response.png)
+
+Both are the deployed task rather than a local run, and the case shown is an approval — the opposite
+end of the range from the rejection returned by the `curl` above. The response headers carry the
+wildcard origin with no credentials header, which is the CORS posture
+[Limitations](#limitations-and-open-work) records.
+
 Pydantic v2 schemas are the contract and FastAPI generates the documentation from them, so it cannot
 drift from what the service accepts. Bounds live in [`src/config.py`](src/config.py) to match the
 ranges seen in training: `loan_int_rate` has a floor of 1.0 rather than 0 because training data runs
@@ -306,7 +315,11 @@ surface rather than developer documentation.
 native booster and groups per-feature contributions into named reasons. The client receives derived
 reasons, never the raw application, so no personal data reaches an external model and the LLM only
 verbalises figures already computed. The tool description states that contributions are log-odds: they
-add up, but they are not shares of the probability.
+add up, but they are not shares of the probability. Below, an LLM client calls
+`assess_loan_application` and reports the decision, the tuned threshold and the drivers in order —
+every figure in that answer came from the tool.
+
+![An LLM client scoring an application through the MCP server and reporting its reason codes](assets/mcp_assessment.png)
 
 **The corpus.** The GDPR and the AI Act from EUR-Lex, split on their own legal structure — article,
 recital, annex — rather than on a fixed window, and budgeted with the real tokenizer: **759 passages,
@@ -338,6 +351,12 @@ against passage lifts hit-rate@5 on the held-out split from **72.0% to 98.0%**, 
 of writer: a second batch of 161 passages, written with no sight of the corpus, the retriever or the
 first batch, finds the same 49 of the 50 answerable questions.
 
+![The MCP server answering a question about automated decisions with GDPR Article 22 and its related provisions](assets/mcp_regulation_answer.png)
+
+The passages carry the citation, the source and the date they were consulted, so every line of that
+answer can be checked against EUR-Lex. The closing caveat is the corpus speaking through the client:
+these provisions say what the law requires, and cannot say what this system actually does.
+
 The invented passage takes the ranking and the real question keeps the veto: it ranks groundable
 questions slightly worse (AUC 0.71 against 0.77) and still cuts better, because every threshold fitted
 to the passage serves more wrong citations — 23.6 against 19.1 per fold.
@@ -350,6 +369,13 @@ one of those reads as grounding while being none. The measure is a hand-labelled
 questions**, 94 fitting and 67 held out, written like what the tool receives — terse fragments,
 paragraph-long rambles, false premises, banking jargon, and a third the corpus cannot answer, each with
 a note justifying that label.
+
+![The MCP server declining to answer a question about Basel capital requirements, with no passages returned](assets/mcp_regulation_abstains.png)
+
+Asked what capital the Basel framework requires, the tool returns nothing and says which refusal
+happened. The client reports that it has no text to quote rather than reaching for a figure — which is
+the whole point: a corpus of the GDPR and the AI Act has no Basel standards in it, and a plausible
+number here would be worse than silence.
 
 A second veto reads the **grammar** of the question rather than its meaning. The corpus states what the
 law requires, so it answers *must we do X* and structurally cannot answer *did we do X* — for which it
