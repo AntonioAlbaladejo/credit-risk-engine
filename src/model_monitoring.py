@@ -1,226 +1,144 @@
+"""Evidently drift and classification-quality report for the promoted bundle.
+
+Reference is the training split and current the held-out test split, as written
+by notebooks/feature_engineering.ipynb. Both are already transformed by the
+bundle's preprocessor, so the model scores them directly; regenerate them
+whenever models/ is retrained, or the report scores one run's data with another.
+"""
+
 from __future__ import annotations
 
-import html
 import os
 from pathlib import Path
 from typing import Any
 
 import joblib
 import pandas as pd
+from evidently import ColumnMapping
+from evidently.metric_preset import (
+    ClassificationPreset,
+    DataDriftPreset,
+    TargetDriftPreset,
+)
+from evidently.report import Report
 
-try:
-    from evidently.metric_preset import (
-        ClassificationPreset,
-        DataDriftPreset,
-        TargetDriftPreset,
+from src.config import (
+    BASE_DIR,
+    DATA_DIR,
+    FEATURE_NAMES_PATH,
+    MODEL_PATH,
+    THRESHOLD_PATH,
+)
+
+RESULTS_DIR = BASE_DIR / "results"
+TARGET = "loan_status"
+PREDICTION = "prediction"
+
+
+def _load_artifacts() -> tuple[Any, list[str], float]:
+    """Load the model, its feature order and its decision threshold.
+
+    Returns:
+        ``(model, feature_names, threshold)`` from ``models/``.
+    """
+    return (
+        joblib.load(MODEL_PATH),
+        joblib.load(FEATURE_NAMES_PATH),
+        joblib.load(THRESHOLD_PATH),
     )
-    from evidently.report import Report
-
-    EVIDENTLY_AVAILABLE = True
-except ImportError:  # pragma: no cover - depends on environment
-    ClassificationPreset = None
-    DataDriftPreset = None
-    TargetDriftPreset = None
-    Report = None
-    EVIDENTLY_AVAILABLE = False
-
-ROOT_DIR = Path(__file__).resolve().parents[1]
-DATA_PATH = ROOT_DIR / "data"
-MODELS_PATH = ROOT_DIR / "models"
-RESULTS_PATH = ROOT_DIR / "results"
-
-
-def _load_artifacts() -> tuple[Any, Any, list[str], Any]:
-    model = joblib.load(MODELS_PATH / "best_tuned_model_xgboost.joblib")
-    preprocessor = joblib.load(MODELS_PATH / "preprocessor.joblib")
-    feature_names = joblib.load(MODELS_PATH / "feature_names.joblib")
-    threshold = joblib.load(MODELS_PATH / "optimal_threshold.joblib")
-    return model, preprocessor, feature_names, threshold
-
-
-def _resolve_target_column(
-    reference_data: pd.DataFrame, current_data: pd.DataFrame, target: str
-) -> str:
-    candidate_names = [target]
-    if target != "default":
-        candidate_names.append("default")
-
-    candidate_names.extend(["default_flag", "loan_status", "target", "y"])
-
-    for candidate in candidate_names:
-        if candidate in reference_data.columns and candidate in current_data.columns:
-            return candidate
-
-    for column in reference_data.columns:
-        if column in current_data.columns and pd.api.types.is_integer_dtype(
-            reference_data[column]
-        ):
-            return column
-
-    raise ValueError(
-        f"Could not identify a compatible target column from {list(reference_data.columns)}"
-    )
-
-
-def _build_simple_html_report(
-    reference_data: pd.DataFrame,
-    current_data: pd.DataFrame,
-    output_path: Path,
-    target: str,
-) -> Path:
-    resolved_target = _resolve_target_column(reference_data, current_data, target)
-
-    reference_copy = reference_data.copy()
-    current_copy = current_data.copy()
-
-    if resolved_target not in reference_copy.columns:
-        raise ValueError(
-            f"Target column '{resolved_target}' not found in reference data"
-        )
-    if resolved_target not in current_copy.columns:
-        raise ValueError(f"Target column '{resolved_target}' not found in current data")
-
-    reference_target = reference_copy[resolved_target].astype(int)
-    current_target = current_copy[resolved_target].astype(int)
-
-    feature_columns = [col for col in reference_copy.columns if col != resolved_target]
-    summary_rows: list[str] = []
-
-    for column in feature_columns:
-        if column not in current_copy.columns:
-            continue
-
-        reference_values = reference_copy[column]
-        current_values = current_copy[column]
-
-        if pd.api.types.is_numeric_dtype(
-            reference_values
-        ) and pd.api.types.is_numeric_dtype(current_values):
-            reference_mean = float(reference_values.mean())
-            current_mean = float(current_values.mean())
-            drift_value = abs(current_mean - reference_mean)
-            metric_text = f"mean shift: {drift_value:.3f}"
-        else:
-            reference_modes = (
-                reference_values.astype(str).value_counts().head(3).to_dict()
-            )
-            current_modes = current_values.astype(str).value_counts().head(3).to_dict()
-            metric_text = f"reference categories: {reference_modes}; current categories: {current_modes}"
-
-        summary_rows.append(
-            f"<tr><td>{html.escape(str(column))}</td><td>{html.escape(metric_text)}</td></tr>"
-        )
-
-    html_content = f"""<!DOCTYPE html>
-<html lang=\"en\">
-<head>
-  <meta charset=\"utf-8\" />
-  <title>Monitoring summary</title>
-  <style>body{{font-family:Arial,sans-serif; margin:2rem;}} table{{border-collapse:collapse; width:100%;}} th, td{{border:1px solid #ccc; padding:0.5rem; text-align:left;}} th{{background:#f5f5f5;}}</style>
-</head>
-<body>
-  <h1>Monitoring summary</h1>
-  <p>Reference rows: {len(reference_copy)} | Current rows: {len(current_copy)}</p>
-  <p>Reference target rate: {reference_target.mean():.2%} | Current target rate: {current_target.mean():.2%}</p>
-  <h2>Target drift</h2>
-  <p>Target prevalence changed by {abs(float(current_target.mean()) - float(reference_target.mean())):.3%}.</p>
-  <h2>Feature-level summary</h2>
-  <table>
-    <thead><tr><th>Feature</th><th>Observation</th></tr></thead>
-    <tbody>
-      {"".join(summary_rows) if summary_rows else '<tr><td colspan="2">No comparable feature columns were found.</td></tr>'}
-    </tbody>
-  </table>
-</body>
-</html>
-"""
-    output_path.write_text(html_content, encoding="utf-8")
-    return output_path
-
-
-def build_simple_monitoring_report(
-    reference_data: pd.DataFrame,
-    current_data: pd.DataFrame,
-    output_path: str | os.PathLike[str],
-    target: str = "default",
-) -> Path:
-    """Create a lightweight monitoring report that does not depend on Evidently."""
-    output_path = Path(output_path)
-    return _build_simple_html_report(reference_data, current_data, output_path, target)
 
 
 def build_monitoring_report(
     reference_data: pd.DataFrame,
     current_data: pd.DataFrame,
+    model: Any,
+    feature_names: list[str],
+    threshold: float,
     output_path: str | os.PathLike[str],
-    target: str = "default",
-) -> Path:
-    """Create a monitoring report using Evidently when available, otherwise fall back to a simple report."""
-    output_path = Path(output_path)
+    target: str = TARGET,
+) -> Report:
+    """Score both datasets with the model and save an Evidently HTML report.
 
-    if EVIDENTLY_AVAILABLE and Report is not None:
-        try:
-            reference_data_with_target = reference_data.copy()
-            current_data_with_target = current_data.copy()
-            resolved_target = _resolve_target_column(
-                reference_data_with_target, current_data_with_target, target
+    Args:
+        reference_data: Transformed features plus the label, usually train.
+        current_data: Same columns, the data being checked.
+        model: Fitted classifier exposing ``predict_proba``.
+        feature_names: Columns the model expects, in its order.
+        threshold: Decision threshold for the classification metrics.
+        output_path: Where the HTML report is written.
+        target: The 0/1 label column.
+
+    Returns:
+        The run report; ``as_dict()`` holds the computed metrics.
+
+    Raises:
+        ValueError: If a dataset lacks a feature or the target, or the target
+            is not 0/1.
+    """
+    scored = []
+    for name, data in (("reference", reference_data), ("current", current_data)):
+        missing = [c for c in [*feature_names, target] if c not in data.columns]
+        if missing:
+            raise ValueError(
+                f"{name} data lacks {missing}; regenerate the splits with "
+                "notebooks/feature_engineering.ipynb"
             )
-
-            if resolved_target not in reference_data_with_target.columns:
-                raise ValueError(
-                    f"Target column '{resolved_target}' not found in reference data"
-                )
-            if resolved_target not in current_data_with_target.columns:
-                raise ValueError(
-                    f"Target column '{resolved_target}' not found in current data"
-                )
-
-            report = Report(
-                metrics=[
-                    DataDriftPreset(),
-                    TargetDriftPreset(),
-                    ClassificationPreset(
-                        target_name=resolved_target,
-                        prediction_feature_names=["prediction"],
-                        classification_task="binary",
-                        probas_features=["prediction"],
-                    ),
-                ]
+        if not data[target].isin([0, 1]).all():
+            raise ValueError(
+                f"{name} column '{target}' is not binary 0/1; pass the label "
+                "column, not a feature"
             )
+        frame = data[[*feature_names, target]].copy()
+        frame[PREDICTION] = model.predict_proba(frame[feature_names])[:, 1]
+        scored.append(frame)
 
-            if "prediction" not in reference_data_with_target.columns:
-                reference_data_with_target["prediction"] = 0.0
-            if "prediction" not in current_data_with_target.columns:
-                current_data_with_target["prediction"] = 0.0
-
-            report.run(
-                reference_data=reference_data_with_target,
-                current_data=current_data_with_target,
-            )
-            report.save_html(str(output_path))
-            return output_path
-        except Exception as exc:  # pragma: no cover - depends on environment
-            print(
-                f"Falling back to simple monitoring report because Evidently failed: {exc}"
-            )
-
-    return _build_simple_html_report(reference_data, current_data, output_path, target)
+    report = Report(
+        metrics=[
+            DataDriftPreset(),
+            TargetDriftPreset(),
+            ClassificationPreset(probas_threshold=threshold),
+        ]
+    )
+    report.run(
+        reference_data=scored[0],
+        current_data=scored[1],
+        column_mapping=ColumnMapping(target=target, prediction=PREDICTION, pos_label=1),
+    )
+    # A metric that fails is kept as an error widget in the HTML; this re-raises.
+    report.as_dict()
+    report.save_html(str(output_path))
+    return report
 
 
 def generate_monitoring_report(
     reference_path: str | os.PathLike[str] | None = None,
     current_path: str | os.PathLike[str] | None = None,
     output_path: str | os.PathLike[str] | None = None,
-    target: str = "default",
+    target: str = TARGET,
 ) -> Path:
-    """Generate a monitoring report from CSV files using the project data directory by default."""
-    reference_path = Path(reference_path or DATA_PATH / "credit_risk_fe.csv")
-    current_path = Path(current_path or DATA_PATH / "test_samples.csv")
-    output_path = Path(output_path or RESULTS_PATH / "model_monitoring_report.html")
+    """Build the report for the promoted bundle from CSV splits.
 
-    reference_data = pd.read_csv(reference_path)
-    current_data = pd.read_csv(current_path)
-    return build_monitoring_report(reference_data, current_data, output_path, target)
+    Args:
+        reference_path: Defaults to the training split.
+        current_path: Defaults to the held-out test split.
+        output_path: Defaults to ``results/model_monitoring_report.html``.
+        target: The 0/1 label column.
+
+    Returns:
+        Path of the written HTML report.
+    """
+    output_path = Path(output_path or RESULTS_DIR / "model_monitoring_report.html")
+    model, feature_names, threshold = _load_artifacts()
+    build_monitoring_report(
+        pd.read_csv(reference_path or DATA_DIR / "credit_risk_fe_train.csv"),
+        pd.read_csv(current_path or DATA_DIR / "credit_risk_fe_test.csv"),
+        model,
+        feature_names,
+        threshold,
+        output_path,
+        target,
+    )
+    return output_path
 
 
 def main() -> None:

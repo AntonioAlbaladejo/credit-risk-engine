@@ -1,64 +1,79 @@
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
+import pytest
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import recall_score, roc_auc_score
 
-from src.model_monitoring import build_simple_monitoring_report
+from src.model_monitoring import build_monitoring_report
+
+FEATURES = ["shifted", "stable"]
+THRESHOLD = 0.39
 
 
-def test_build_simple_monitoring_report_creates_html_summary(tmp_path: Path) -> None:
-    reference_data = pd.DataFrame(
-        {
-            "default": [0, 1, 0, 1],
-            "score": [0.2, 0.6, 0.3, 0.8],
-        }
+def _split(rng: np.random.Generator, shift: float, n: int = 1000) -> pd.DataFrame:
+    data = pd.DataFrame(
+        {"shifted": rng.normal(shift, 1.0, n), "stable": rng.integers(0, 2, n)}
     )
-    current_data = pd.DataFrame(
-        {
-            "default": [0, 1, 1, 1],
-            "score": [0.25, 0.55, 0.7, 0.9],
-        }
-    )
-
-    output_path = tmp_path / "monitoring_report.html"
-    result_path = build_simple_monitoring_report(
-        reference_data=reference_data,
-        current_data=current_data,
-        output_path=output_path,
-        target="default",
-    )
-
-    assert result_path == output_path
-    assert output_path.exists()
-    html = output_path.read_text(encoding="utf-8")
-    assert "Monitoring summary" in html
-    assert "Target drift" in html
+    p_default = 1 / (1 + np.exp(-2 * data["shifted"]))
+    data["loan_status"] = (rng.random(n) < p_default).astype(int)
+    return data
 
 
-def test_build_simple_monitoring_report_auto_detects_target_column(
-    tmp_path: Path,
-) -> None:
-    reference_data = pd.DataFrame(
-        {
-            "default_flag": [0, 1, 0, 1],
-            "score": [0.2, 0.6, 0.3, 0.8],
-        }
-    )
-    current_data = pd.DataFrame(
-        {
-            "default_flag": [0, 1, 1, 1],
-            "score": [0.25, 0.55, 0.7, 0.9],
-        }
+@pytest.fixture
+def splits() -> tuple[pd.DataFrame, pd.DataFrame, LogisticRegression]:
+    rng = np.random.default_rng(42)
+    reference, current = _split(rng, 0.0), _split(rng, 1.5)
+    model = LogisticRegression(random_state=42)
+    model.fit(reference[FEATURES], reference["loan_status"])
+    return reference, current, model
+
+
+def test_report_computes_real_metrics(splits, tmp_path: Path) -> None:
+    reference, current, model = splits
+    output = tmp_path / "report.html"
+
+    report = build_monitoring_report(
+        reference, current, model, FEATURES, THRESHOLD, output
     )
 
-    output_path = tmp_path / "monitoring_report.html"
-    result_path = build_simple_monitoring_report(
-        reference_data=reference_data,
-        current_data=current_data,
-        output_path=output_path,
-        target="default",
-    )
+    metrics = {m["metric"]: m["result"] for m in report.as_dict()["metrics"]}
+    quality = metrics["ClassificationQualityMetric"]["current"]
+    proba = model.predict_proba(current[FEATURES])[:, 1]
+    y = current["loan_status"]
+    assert quality["roc_auc"] == pytest.approx(roc_auc_score(y, proba))
+    assert quality["recall"] == pytest.approx(recall_score(y, proba >= THRESHOLD))
 
-    assert result_path == output_path
-    assert output_path.exists()
-    html = output_path.read_text(encoding="utf-8")
-    assert "Target drift" in html
+    drift = metrics["DataDriftTable"]["drift_by_columns"]
+    assert drift["shifted"]["drift_detected"]
+    assert not drift["stable"]["drift_detected"]
+    assert output.stat().st_size > 0
+
+
+def test_rejects_a_feature_as_target(splits, tmp_path: Path) -> None:
+    # The old report guessed its target and landed on a scaled feature.
+    reference, current, model = splits
+    with pytest.raises(ValueError, match="not binary"):
+        build_monitoring_report(
+            reference,
+            current,
+            model,
+            FEATURES,
+            THRESHOLD,
+            tmp_path / "r.html",
+            target="shifted",
+        )
+
+
+def test_rejects_data_missing_a_model_feature(splits, tmp_path: Path) -> None:
+    reference, current, model = splits
+    with pytest.raises(ValueError, match="lacks"):
+        build_monitoring_report(
+            reference,
+            current.drop(columns="stable"),
+            model,
+            FEATURES,
+            THRESHOLD,
+            tmp_path / "r.html",
+        )
