@@ -8,6 +8,7 @@ whenever models/ is retrained, or the report scores one run's data with another.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,8 @@ from src.config import (
     MODEL_PATH,
     THRESHOLD_PATH,
 )
+
+logger = logging.getLogger(__name__)
 
 RESULTS_DIR = BASE_DIR / "results"
 TARGET = "loan_status"
@@ -142,8 +145,8 @@ def generate_monitoring_report(
 
 
 def main() -> None:
-    report_path = generate_monitoring_report()
-    print(f"Monitoring report saved to {report_path}")
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logger.info("Monitoring report saved to %s", generate_monitoring_report())
 
 
 if __name__ == "__main__":
