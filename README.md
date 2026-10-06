@@ -470,9 +470,10 @@ the **24 features** the model uses. Raw data is not committed.
   `allow_credentials=False`, which keeps that wildcard legal — and the 60-per-minute cap is the only
   thing in front of the half vCPU. It serves plain HTTP; a certificate needs a domain and something to
   terminate TLS.
-- **The Evidently report does not measure anything yet.** It compares the full feature table against a
-  three-row hand-written file from a pipeline that no longer exists, then resolves the target to a
-  scaled feature and truncates it to zero. The leak-free splits it should read already exist.
+- **The Evidently report watches the pipeline, not live traffic.** It scores the training and held-out
+  test splits with the shipped model at its tuned threshold. Both come from one stratified random
+  split, so drift reads near zero by construction; served requests are not captured, so there is no
+  production window to compare yet.
 
 ---
 
