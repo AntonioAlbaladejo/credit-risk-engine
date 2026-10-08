@@ -22,6 +22,7 @@ uv run ruff check --fix . && uv run ruff format .      # autofix before committi
 docker build -t credit-risk-engine:local . && docker run --rm -p 8000:8000 credit-risk-engine:local
 uv run mlflow ui --backend-store-uri sqlite:///mlflow.db   # local tracking UI (:5000)
 uv run python scripts/train.py [--baselines] [--save clean-unweighted]  # retrain / promote
+uv run python -m src.model_monitoring    # Evidently train-vs-test report → results/ (needs data/)
 uv run python -m scripts.ingest_corpus   # rebuild corpus/ from EUR-Lex (cached in corpus/raw/)
 ```
 
