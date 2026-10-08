@@ -1,8 +1,9 @@
-"""Render the two figures the README relies on.
+"""Render the figures the README relies on.
 
-Both come from measured data, never from hand-drawn numbers: the threshold
+All come from measured data, never from hand-drawn numbers: the threshold
 sweep is read straight from results/threshold_optimization.csv, and the
-calibration curve is recomputed on the held-out test split.
+calibration curve, confusion matrix and reason-code impact are recomputed on
+the held-out test split with the shipped model.
 
 The split is rebuilt through train.prepare() rather than reimplemented, so the
 figures cannot silently drift from the pipeline that produced the artifacts.
@@ -24,11 +25,19 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd  # noqa: E402
+import xgboost as xgb  # noqa: E402
+from sklearn.metrics import ConfusionMatrixDisplay  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.config import DATA_DIR, FEATURE_NAMES_PATH, MODEL_PATH  # noqa: E402
+from src.config import (  # noqa: E402
+    DATA_DIR,
+    FEATURE_NAMES_PATH,
+    MODEL_PATH,
+    THRESHOLD_PATH,
+)
+from src.explainer import REASON_GROUPS  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
@@ -95,27 +104,26 @@ def calibration_by_decile(proba, actual) -> tuple[pd.DataFrame, float]:
     return grouped, (grouped["predicted"] - grouped["observed"]).abs().mean()
 
 
-def plot_calibration(path: Path) -> None:
-    """Predicted probability against observed default rate, by decile.
-
-    Plots the weighted arm alongside the shipped one: the gap between the two
-    curves is the whole argument for dropping scale_pos_weight.
-    """
-    train = load_train_module()
-    df = pd.read_csv(DATA_DIR / "credit_risk_cleaned.csv")
-    data = train.prepare(df, leaky=False)
-
+def load_split(train) -> dict:
+    """Rebuild the splits and check they match the shipped bundle."""
+    data = train.prepare(pd.read_csv(DATA_DIR / "credit_risk_cleaned.csv"), leaky=False)
     expected = list(joblib.load(FEATURE_NAMES_PATH))
     if data["features"] != expected:
         raise RuntimeError(
             "Feature selection no longer matches models/feature_names.joblib. "
             "Rerun scripts/train.py --save clean-unweighted before plotting."
         )
+    return data
 
+
+def plot_calibration(path: Path, train, data: dict, model) -> None:
+    """Predicted probability against observed default rate, by decile.
+
+    Plots the weighted arm alongside the shipped one: the gap between the two
+    curves is the whole argument for dropping scale_pos_weight.
+    """
     actual = data["y_test"].to_numpy()
-    shipped, ece = calibration_by_decile(
-        joblib.load(MODEL_PATH).predict_proba(data["Xte"])[:, 1], actual
-    )
+    shipped, ece = calibration_by_decile(model.predict_proba(data["Xte"])[:, 1], actual)
 
     # Retrained here rather than stored: it is a counter-example for the figure,
     # not a deployment candidate, so it has no business in models/.
@@ -167,10 +175,76 @@ def plot_calibration(path: Path) -> None:
     logger.info("wrote %s (ECE %.4f)", path, ece)
 
 
+def plot_confusion_matrix(path: Path, data: dict, model) -> None:
+    """Test-split outcomes at the tuned threshold, as counts."""
+    threshold = float(joblib.load(THRESHOLD_PATH))
+    predicted = (model.predict_proba(data["Xte"])[:, 1] >= threshold).astype(int)
+
+    fig, ax = plt.subplots(figsize=(5, 4.5))
+    ConfusionMatrixDisplay.from_predictions(
+        data["y_test"],
+        predicted,
+        display_labels=["Repaid", "Defaulted"],
+        cmap="Blues",
+        colorbar=False,
+        values_format=",d",
+        ax=ax,
+    )
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("Actual")
+    ax.set_title(f"Test split, threshold {threshold:.2f}", fontsize=11)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    logger.info("wrote %s", path)
+
+
+def mean_abs_by_reason(contribs: pd.DataFrame) -> pd.Series:
+    """Mean |SHAP| per reason code, summing within a group before taking abs.
+
+    Summing first matches how RiskExplainer reports a reason: dummies of one
+    block offset each other, and abs-then-sum would overstate the block.
+    """
+    return pd.Series(
+        {
+            code: contribs[list(names)].sum(axis=1).abs().mean()
+            for code, names in REASON_GROUPS.items()
+        }
+    ).sort_values()
+
+
+def plot_reason_importance(path: Path, data: dict, model) -> None:
+    """Average impact of each reason code on the test split, in log-odds."""
+    features = data["features"]
+    contribs = model.get_booster().predict(
+        xgb.DMatrix(data["Xte"], feature_names=features), pred_contribs=True
+    )
+    impact = mean_abs_by_reason(pd.DataFrame(contribs[:, :-1], columns=features))
+
+    fig, ax = plt.subplots(figsize=(7, 4))
+    labels = [code.replace("_", " ").capitalize() for code in impact.index]
+    bars = ax.barh(labels, impact.to_numpy(), color=COLORS["precision"], height=0.6)
+    ax.bar_label(bars, fmt="%.2f", padding=4, fontsize=9, color="#333333")
+    ax.set_xlabel("Mean |SHAP contribution| (log-odds)")
+    ax.set_title("What drives the score, on the test split", fontsize=11)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.grid(axis="x", alpha=0.25)
+    ax.set_axisbelow(True)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    logger.info("wrote %s", path)
+
+
 def main() -> None:
     ASSETS_DIR.mkdir(exist_ok=True)
+    train = load_train_module()
+    data = load_split(train)
+    model = joblib.load(MODEL_PATH)
     plot_threshold_sweep(ASSETS_DIR / "threshold_sweep.png")
-    plot_calibration(ASSETS_DIR / "calibration.png")
+    plot_calibration(ASSETS_DIR / "calibration.png", train, data, model)
+    plot_confusion_matrix(ASSETS_DIR / "confusion_matrix.png", data, model)
+    plot_reason_importance(ASSETS_DIR / "reason_importance.png", data, model)
 
 
 if __name__ == "__main__":
