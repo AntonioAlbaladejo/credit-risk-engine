@@ -1,214 +1,261 @@
 # Credit Risk Engine
 
-Probability-of-default scoring for consumer loans: a calibrated XGBoost model served as a FastAPI
-service, containerised and deployed to AWS ECS Fargate — with the GDPR and EU AI Act provisions
-behind a decision retrievable from the same container.
+End-to-end machine learning system that predicts the **probability that a consumer loan will
+default**, explains every decision in plain reason codes, and runs as a containerised API on **AWS
+ECS Fargate** behind a tested CI/CD pipeline. A retrieval layer (RAG) answers which **GDPR** and
+**EU AI Act** provisions apply to a credit decision, citing the law, or declines when the law
+doesn't cover the question.
 
 [![CI](https://github.com/AntonioAlbaladejo/credit-risk-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/AntonioAlbaladejo/credit-risk-engine/actions/workflows/ci.yml)
+[![CD](https://github.com/AntonioAlbaladejo/credit-risk-engine/actions/workflows/cd.yml/badge.svg)](https://github.com/AntonioAlbaladejo/credit-risk-engine/actions/workflows/cd.yml)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-black.svg)](https://github.com/astral-sh/ruff)
 
-[Results](#results) · [Design decisions](#design-decisions) · [Architecture](#architecture-and-delivery) ·
-[Running it](#running-it) · [API](#api) · [LLM surface](#llm-surface-explanations-and-regulatory-grounding) ·
-[Limitations](#limitations-and-open-work)
+[Highlights](#highlights) · [Architecture](#architecture) · [Data](#data) ·
+[Modelling](#modelling) · [Results](#results) · [Key decisions](#key-decisions) ·
+[Explainability](#explainability) · [API](#api-and-quickstart) · [Deployment](#deployment) ·
+[Regulatory search](#regulatory-search-rag) · [Limitations](#limitations-and-next-steps)
 
 ---
 
-## At a glance
+## Highlights
 
-| | |
-|---|---|
-| **What it does** | Scores a loan application for probability of default, explains it as reason codes, and retrieves the GDPR / EU AI Act passages bearing on a question — with citations, or nothing when the corpus cannot answer |
-| **Model** | XGBoost on 31,679 applications at a 21.5% default rate. **0.9495 ROC-AUC · 0.9051 PR-AUC · 0.0082 calibration error**, held out, against three measured alternatives |
-| **The decision** | Threshold tuned on validation (**0.39**) and returned in every response — not an assumed 0.5 |
-| **Serving** | FastAPI + Pydantic v2. Preprocessor, model, feature list and threshold load as one versioned bundle; `/health` is `503` until the model is really in memory |
-| **Retrieval** | 759 passages of the two acts, **98.0% hit-rate@5** held out, and a tuned threshold below which it returns nothing and says so |
-| **LLM surface** | An MCP server over stdio and `POST /regulation/search` over HTTP, sharing one payload builder |
-| **Delivery** | GitHub Actions → ECR → ECS Fargate (eu-west-1). The image is started and called before it is pushed, then run again with no network |
-| **Quality** | 193 pytest tests in ~6 s, ruff clean, six pinned against the real artifacts |
+- **Accurate and calibrated model.** XGBoost on 31,679 loan applications. On a held-out test set:
+  **ROC-AUC 0.95 · PR-AUC 0.91**. It catches **76% of defaults**, and **93%** of the applications
+  it rejects really do default. Its probabilities match observed default rates (calibration error
+  0.008), so the score can be used as a real probability of default.
+- **Leak-free methodology.** Stratified train/validation/test split; every scaler, encoder and
+  feature selector fitted on training data only; decision threshold tuned on validation; test set
+  used once. Seed `42` throughout.
+- **Explainable decisions.** Each score is broken down with SHAP into reason codes such as
+  *affordability*, *loan grade* and *interest rate*.
+- **Production API.** FastAPI + Pydantic v2, with input bounds taken from the training data, a
+  real health check and per-client rate limiting.
+- **CI/CD to AWS.** GitHub Actions → Docker → Amazon ECR → ECS Fargate. The image is started and
+  called before it is pushed, so a broken build never reaches production.
+- **MLOps.** MLflow experiment tracking, a single versioned model bundle, an Evidently monitoring
+  report.
+- **GenAI layer.** RAG over 759 passages of the GDPR and the EU AI Act: the correct provision
+  appears in the top 5 for **98% of held-out questions**. Exposed to LLM clients through an
+  **MCP server** and to everyone else through a REST endpoint.
+- **Tested.** 195 pytest tests, 11 of them against the real model artifacts; ruff-clean.
 
-Four decisions shape everything below:
+Model metrics are reproduced by `scripts/train.py` (tables in [`results/`](results/)), figures by
+`scripts/plot_results.py`, and retrieval metrics by `scripts/evaluate_retrieval.py`.
 
-- **Every `fit` happens inside the training split.** The leak it replaced was measured, not assumed —
-  it did not inflate the metrics, and was fixed anyway.
-  [↓](#every-fit-happens-inside-the-training-split)
-- **The score is calibrated and the threshold is a separate artifact**, so the operating point moves
-  without retraining. [↓](#no-smote-and-no-class-weighting-either)
-- **Training and serving share one feature implementation**, because the two copies that preceded it
-  had already drifted apart in silence. [↓](#training-and-serving-share-one-implementation)
-- **Nothing ships on an unmeasured improvement.** Seven retrieval variants were built, measured and
-  dropped, one of them after it had already been written up.
-  [↓](#what-was-built-measured-and-dropped)
+---
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph build["① Build · offline"]
+        train["<b>Training pipeline</b><br/>Kaggle loan data<br/>→ train.py<br/>tracked in MLflow"]
+        ingest["<b>Corpus pipeline</b><br/>GDPR + EU AI Act<br/>→ ingest_corpus.py"]
+    end
+
+    subgraph git["② Versioned in git"]
+        artifacts[("Model bundle<br/>+ legal corpus")]
+    end
+
+    subgraph ship["③ Ship · GitHub Actions"]
+        cicd["Test<br/>→ build image<br/>→ smoke test<br/>→ push to ECR"]
+    end
+
+    subgraph serve["④ Serve"]
+        api["<b>REST API</b><br/>AWS ECS Fargate<br/>for HTTP clients"]
+        mcp["<b>MCP server</b><br/>runs locally<br/>for LLM clients"]
+    end
+
+    train --> artifacts
+    ingest --> artifacts
+    artifacts --> cicd --> api
+    artifacts ---> mcp
+```
+
+1. **Build.** Two offline pipelines turn raw sources into artifacts. `scripts/train.py` engineers
+   features, splits, trains and tunes the threshold, logging every run to MLflow;
+   `scripts/ingest_corpus.py` splits the two acts into passages and embeds them.
+2. **Versioned.** The model bundle (preprocessor, model, feature list, threshold) and the legal
+   corpus with its vector index are committed, so any fresh checkout, CI's included, has everything
+   needed to serve.
+3. **Ship.** Every push to `main` is tested, built into a Docker image, started and called as a
+   smoke test, pushed to Amazon ECR and deployed. Details in [Deployment](#deployment).
+4. **Serve.** The REST API on ECS Fargate scores applications and searches the law for HTTP
+   clients. The MCP server gives LLM clients such as Claude the same model and corpus, running on
+   the user's machine.
+
+---
+
+## Data
+
+The [Credit Risk Dataset](https://www.kaggle.com/datasets/laotse/credit-risk-dataset) from Kaggle:
+32,581 loan applications with applicant data (age, income, home ownership, employment length,
+credit history) and loan data (amount, purpose, grade, interest rate). The target is `loan_status`,
+default or not. After cleaning: **31,679 rows, 21.5% defaults**, a mild 3.6 : 1 imbalance.
+
+What the exploratory analysis showed:
+
+- **Home ownership separates risk sharply:** renters default at 31.1%, owners under 7%.
+- **Loan grade is close to a risk ladder:** grade B defaults at 15.9%, grade F at 70.3%, grade G
+  at 98.4%.
+- **Some inputs are redundant:** age and credit history length correlate at 0.88, so only one is
+  kept and the API does not ask for the other.
+- **Several numeric features are skewed with many outliers.** A log transform fixes that, but it is
+  kept as a diagnostic only: the tree model selected does not need it.
+
+The analysis lives in four notebooks: [ingestion](notebooks/data_ingestion.ipynb) ·
+[EDA](notebooks/exploratory_data_analysis.ipynb) ·
+[feature engineering](notebooks/feature_engineering.ipynb) ·
+[model selection](notebooks/model_selection.ipynb). Production code lives in `src/` and
+`scripts/`; the notebooks explore and explain, and nothing ships from them. The raw data is not
+committed.
+
+---
+
+## Modelling
+
+`scripts/train.py` runs the whole pipeline end to end and logs every run to MLflow:
+
+1. **Feature engineering.** Loan-to-income and employment-to-age ratios, age and employment-length
+   buckets, and a binary prior-default flag. The same function runs in training and in the API.
+2. **Stratified split** into train / validation / test (64 / 16 / 20).
+3. **Preprocessing fitted on train only.** Median imputation + scaling for numeric columns,
+   most-frequent imputation + one-hot encoding for categorical ones: 40 columns.
+4. **Feature selection fitted on train only.** Correlation, tree importance and variance filters
+   reduce 40 columns to 18; one-hot groups the filters had split are then restored whole, giving
+   **24 features**. The engineered ratios and buckets did not survive: `loan_to_income`, for
+   instance, correlates 0.9989 with the existing `loan_percent_income`.
+5. **Four algorithms compared** under that identical pipeline. The best two were tuned with
+   `GridSearchCV` in the model-selection notebook, keeping the simplest configuration within one
+   standard error of the best cross-validated PR-AUC. The final model is XGBoost (`max_depth=4`,
+   `n_estimators=300`, `learning_rate=0.1`, `subsample=0.8`).
+6. **Decision threshold** chosen on the validation set by maximising F1, then applied unchanged to
+   the test set, which is evaluated once.
 
 ---
 
 ## Results
 
-The 6,336-row test split, held out from every `fit` call and from the threshold search. Seed `42`.
-XGBoost, `max_depth=4`, `n_estimators=300`, no class weighting, threshold 0.39, 24 features.
+Held-out test set, 6,336 applications, threshold 0.39.
 
 | ROC-AUC | PR-AUC | Brier ↓ | Calibration error ↓ | Recall | Precision | F1 |
 |---|---|---|---|---|---|---|
 | **0.9495** | **0.9051** | **0.0516** | **0.0082** | 0.7560 | 0.9348 | 0.8360 |
 
-The model catches 75.6% of real defaults, and 93.5% of the applications it rejects would have
-defaulted. Mean predicted probability is 0.2153 against an observed 0.2154.
+In business terms: the model flags **75.6% of the loans that will default**, and **93.5% of the
+loans it flags do default**. The average predicted probability (21.53%) matches the real default
+rate (21.54%).
+
+<img src="assets/confusion_matrix.png" alt="Confusion matrix on the test split at threshold 0.39" width="420">
+
+Of 1,365 defaults in the test set, 1,032 are caught and 333 missed; only 72 of 4,971 good loans are
+wrongly rejected.
 
 ### Model selection
 
-Four algorithms under an identical pipeline — same split, same preprocessor, same 24 features, no
-imbalance handling anywhere — so the only variable between rows is the algorithm.
+Same split, same preprocessing, same 24 features: only the algorithm changes. Each model gets its
+own threshold, tuned on validation the same way.
 
 | Model | ROC-AUC | PR-AUC | Brier ↓ | Precision | Recall | F1 |
 |---|---|---|---|---|---|---|
 | Logistic Regression | 0.8750 | 0.7398 | 0.0986 | 0.6771 | 0.6960 | 0.6864 |
-| Random Forest | 0.9315 | 0.8843 | 0.0565 | 0.9416 | 0.7436 | 0.8309 |
-| **XGBoost** | **0.9495** | **0.9051** | **0.0516** | **0.9348** | **0.7560** | **0.8360** |
+| Random Forest | 0.9315 | 0.8843 | 0.0565 | **0.9416** | 0.7436 | 0.8309 |
+| **XGBoost** | **0.9495** | **0.9051** | **0.0516** | 0.9348 | **0.7560** | **0.8360** |
 | SVM (RBF) | 0.9041 | 0.8464 | 0.0693 | 0.8738 | 0.6952 | 0.7744 |
 
-XGBoost wins every column, so the choice hides no trade-off. Logistic regression is the informative
-loser: trailing by 7.5 ROC-AUC and 17 PR-AUC points says the boundary is genuinely non-linear.
+XGBoost wins on every threshold-independent metric (ROC-AUC, PR-AUC, Brier) and on recall and F1;
+Random Forest is slightly more precise at its own threshold. Logistic regression trails by 7.5
+ROC-AUC points, a sign that the relationship between features and default is clearly non-linear.
 
-Regenerate with `uv run python scripts/train.py [--baselines]`, which writes
-[`baseline_comparison.csv`](results/baseline_comparison.csv) and
-[`leakage_and_weighting_comparison.csv`](results/leakage_and_weighting_comparison.csv).
+<p>
+  <img src="assets/calibration.png" alt="Predicted vs observed default rate by decile" width="49%">
+  <img src="assets/threshold_sweep.png" alt="Precision, recall and F1 across thresholds" width="49%">
+</p>
+
+**Left:** predicted vs. observed default rate per decile. The shipped model sits on the diagonal;
+the class-weighted alternative over-predicts risk. **Right:** precision, recall and F1 across
+thresholds. F1 is flat between roughly 0.3 and 0.7, so the cut-off can move on business grounds
+without breaking the model ([full sweep](results/threshold_optimization.csv)).
 
 ---
 
-## Design decisions
+## Key decisions
 
-### Every `fit` happens inside the training split
+**No data leakage.** An earlier notebook version fitted the preprocessing and feature selection on
+the full dataset before splitting. The current pipeline fits everything on training data only. Both
+versions were run side by side and produced identical test metrics, so no reported number was
+inflated; the fix is about correctness, because a pipeline that is only accidentally right does not
+stay right.
 
-Preprocessor, feature selector and threshold search see training or validation data only; test is
-touched once, at the end. An earlier notebook pipeline fitted and selected over the full dataset.
+**Calibration over class weighting, and no SMOTE.** With 21.5% defaults the imbalance is mild.
+`scale_pos_weight` inflated the average predicted risk to 30% against a real 21.5% without
+improving ranking (ROC-AUC 0.9492 vs 0.9495); dropping it improved the Brier score by 24%. In an
+earlier comparison on the previous 18-feature pipeline, three SMOTE variants all lowered ROC-AUC
+and PR-AUC, and 15% of the synthetic rows had impossible one-hot values (no valid loan grade).
+Tuning the threshold gives the recall benefit without distorting the probabilities.
 
-| Arm | ROC-AUC | PR-AUC | Brier ↓ | Mean predicted | Threshold |
+| Experiment | ROC-AUC | PR-AUC | Brier ↓ | Avg. predicted | Threshold |
 |---|---|---|---|---|---|
-| Old pipeline: leaky + weighted | 0.9492 | 0.9046 | 0.0682 | 0.3035 | 0.70 |
-| Clean split + weighted | 0.9492 | 0.9046 | 0.0682 | 0.3035 | 0.70 |
-| **Clean split, unweighted** (shipped) | **0.9495** | **0.9051** | **0.0516** | **0.2153** | 0.39 |
+| Leaky pipeline + class weighting | 0.9492 | 0.9046 | 0.0682 | 0.3035 | 0.70 |
+| Leak-free + class weighting | 0.9492 | 0.9046 | 0.0682 | 0.3035 | 0.70 |
+| **Leak-free, no weighting** (shipped) | **0.9495** | **0.9051** | **0.0516** | **0.2153** | 0.39 |
 
-![Brier score across the three arms, compared in MLflow](assets/mlflow_brier_comparison.png)
+![The three experiments compared in MLflow](assets/mlflow_brier_comparison.png)
 
-The leak did **not** inflate the metrics — the leaky arm scored marginally worse — but a pipeline that
-is only accidentally correct will not stay correct. Each arm is an MLflow run with `leaky` and
-`weighted` logged separately, so either factor can be isolated: fixing the leak alone moves Brier
-almost nothing, dropping the weighting moves it a long way.
+**Keep one-hot groups whole.** The selection filters score one column at a time and had dropped
+grades B, F and G, merging them into a single category that was 97% grade B. Grades F (70% default
+rate) and G (98%) were being scored like B (16%). Aggregate metrics did not move, because F and G
+are under 1% of the data, which is exactly why it needed checking. Restoring whole groups fixed it.
 
-### No SMOTE, and no class weighting either
-
-At 21.5% positives (3.64:1) the imbalance is mild. Three SMOTE variants all degraded ROC-AUC and
-PR-AUC, and 15% of the synthetic rows carried a `loan_grade` block that was not a valid one-hot —
-interpolating over encoded columns invents categories that do not exist. Once the threshold is tuned
-every arm lands between 0.8370 and 0.8447 F1: what oversampling promises, tuning already delivers.
-
-![Calibration by decile, with and without class weighting](assets/calibration.png)
-
-Class weighting was then dropped for calibration. Same algorithm, features and split; only
-`scale_pos_weight` differs. The weighted model over-predicts risk — calibration error 0.0893 against
-0.0082, mean prediction 0.3035 against a true rate of 0.2154 — and buys 0.0003 ROC-AUC for it.
-Unweighted, no decile deviates more than 2.5 points and Brier improves 24%.
-
-### The threshold is a tuned artifact, not 0.5
-
-![Precision, recall and F1 across the decision threshold](assets/threshold_sweep.png)
-
-Chosen on the **validation** split by maximising F1, then applied unchanged to test; picking it on
-test would leak the test set into the reported operating point. The curve is flat between roughly 0.3
-and 0.7, so the cut-off can move on business grounds without collapsing the model
-([full sweep](results/threshold_optimization.csv)). Every response carries `threshold_used`.
-
-### Training and serving share one implementation
-
-`create_derived_features()` in [`src/preprocessing.py`](src/preprocessing.py) is imported by both the
-training script and the serving path. It existed twice before, and the copies had already drifted —
-different zero-division handling, different bucket dtypes. That is train/serve skew: no error, no
-failing test, just quietly wrong predictions. Preprocessor, feature list, model and threshold are
-likewise one versioned bundle, produced by a single run and loaded together. MLflow lookup is opt-in,
-so an unreachable tracking server degrades to the local artifacts instead of blocking startup for 247
-seconds of retry backoff.
+**One feature-engineering implementation for training and serving.** There used to be two copies,
+and they had already drifted apart (different zero-division handling, different data types). That
+kind of train/serve skew raises no error and fails no test; it just produces wrong predictions. Now
+both paths import the same function, and the preprocessor, model, feature list and threshold are
+saved and loaded together as one versioned bundle.
 
 ---
 
-## Architecture and delivery
+## Explainability
 
-```mermaid
-flowchart TB
-    subgraph training["Training  ·  scripts/train.py"]
-        direction LR
-        raw[("credit_risk_cleaned.csv<br/>31,679 rows")]
-        derive["create_derived_features()"]
-        split["Stratified split<br/>64 / 16 / 20"]
-        fit["Fit preprocessor<br/>+ select features<br/>(train split only)"]
-        train["XGBoost"]
-        thr["Pick threshold<br/>(on validation)"]
-        raw --> derive --> split --> fit --> train --> thr
-    end
+[`src/explainer.py`](src/explainer.py) computes exact TreeSHAP contributions for each application
+and groups them into six reason codes: **affordability, loan grade, interest rate, stability, loan
+purpose, credit history**.
 
-    subgraph bundle["Versioned artifact bundle  ·  models/"]
-        art["preprocessor · model<br/>feature_names · threshold"]
-    end
+<img src="assets/reason_importance.png" alt="Mean absolute SHAP contribution per reason code on the test split" width="620">
 
-    subgraph corpusdir["Versioned corpus  ·  corpus/"]
-        idx["759 passages<br/>+ vector index"]
-    end
+Across the test set, **affordability** (income, amount, share of income) moves the score most. A
+prior default on file barely moves it, because the lender's grade already carries that signal: no
+grade A or B loan has one, against about half of grades C to G.
 
-    subgraph serving["Serving  ·  src/api"]
-        direction LR
-        api["FastAPI<br/>/predict · /regulation/search<br/>/health"]
-        pre["DataPreprocessor<br/>(same derivation)"]
-        api --> pre --> art
-    end
+The reasons are served through the MCP tool `assess_loan_application`, which returns only the
+probability, the decision and the reason codes, so an LLM client explains a decision with figures
+the model computed instead of inventing its own:
 
-    api --> idx
-
-    subgraph deploy["Delivery  ·  GitHub Actions"]
-        direction LR
-        ci["CI: ruff + pytest"]
-        img["Docker build<br/>+ live endpoint and no-network check"]
-        ecr[("Amazon ECR")]
-        ecs["ECS Fargate<br/>eu-west-1"]
-        dns["EventBridge → Lambda<br/>stable hostname"]
-        ci --> img --> ecr --> ecs --> dns
-    end
-
-    thr --> art
-    derive -.->|shared code| pre
-    serving --> img
-
-    mlflow[("MLflow<br/>params · metrics · runs")]
-    training -.-> mlflow
-```
-
-CD triggers only on a successful CI run, builds the image, **starts the container and calls `/health`,
-`/predict` and `/regulation/search` against it**, then runs it once more with `--network none`, and
-only then pushes to ECR and deploys. The step those checks replaced ran `python -c "import src"`,
-which passes even when the model artifacts are missing from the image entirely; the offline run
-catches the same failure one level down, since a runner has network and an image that had lost its
-baked embedding weights would quietly download them and fail only on Fargate.
-
-![The service running on ECS Fargate](assets/fargate_service.png)
-
-Fargate gives the task a fresh public IP every time it replaces it, so an EventBridge rule on `ECS
-Task State Change` calls a Lambda that writes the new address to a DuckDNS record
-([`infra/dns_updater/`](infra/dns_updater/)) — on the ECS event rather than as a step in `cd.yml`,
-because the pipeline only ever sees the replacements a deployment causes. An Elastic IP is the obvious
-move and cannot be attached to a Fargate task at all.
+![An LLM client scoring an application through the MCP server and reporting its reason codes](assets/mcp_assessment.png)
 
 ---
 
-## Running it
+## API and quickstart
 
-Needs [uv](https://docs.astral.sh/uv/getting-started/installation/); it reads `.python-version` and
-fetches Python 3.11, the same version the image runs.
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/), which installs Python 3.11
+automatically.
 
 ```bash
 git clone https://github.com/AntonioAlbaladejo/credit-risk-engine.git
 cd credit-risk-engine
 uv sync --all-groups
-uv run uvicorn src.api.main:app --reload --port 8000   # docs at :8000/docs
+uv run uvicorn src.api.main:app --port 8000      # interactive docs at localhost:8000/docs
 ```
+
+Or with Docker. The image already contains the model, the legal corpus and the embedding model:
+
+```bash
+docker build -t credit-risk-engine . && docker run --rm -p 8000:8000 credit-risk-engine
+```
+
+Score an application:
 
 ```bash
 curl -X POST http://localhost:8000/predict \
@@ -222,266 +269,200 @@ curl -X POST http://localhost:8000/predict \
 ```json
 {
   "prediction": 1,
-  "probability_default": 0.9998000264167786,
+  "probability_default": 0.9998,
+  "probability_non_default": 0.0002,
   "risk_level": "high_risk",
   "threshold_used": 0.39,
   "recommendation": "Reject application"
 }
 ```
 
-The corpus and its index are versioned, so the same clone searches the legislation with no ingestion
-step. Write the passage you would expect the law to contain: it is matched in place of the question,
-while the question alone decides whether anything comes back at all.
-
-```bash
-curl -X POST http://localhost:8000/regulation/search \
-  -H 'Content-Type: application/json' \
-  -d '{"question": "Do we have to let someone contest an automated rejection?",
-       "hypothetical_passage": "The data subject shall have the right to obtain human intervention on the part of the controller, to express his or her point of view and to contest the decision."}'
-```
-
-```json
-{"passages": [{
-  "citation": "GDPR, Article 22(1-4) - Automated individual decision-making, including profiling",
-  "text": "1. The data subject shall have the right not to be subject to a decision ...",
-  "source_url": "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32016R0679",
-  "retrieved_on": "2026-08-16"}]}
-```
-
-Four more passages follow. Ask something the legislation cannot answer — *what is our current model
-AUC?* — and `passages` comes back empty with a `note` saying which of the two refusals happened.
-
-The 647 MB image carries the model artifacts, the corpus with its index and the embedding weights, so
-a fresh clone builds a container that both scores applications and searches the legislation. MLflow,
-Evidently, seaborn and the CUDA build of XGBoost are dev-only and never reach the runtime layer.
-
-```bash
-docker build -t credit-risk-engine:local . && docker run --rm -p 8000:8000 credit-risk-engine:local
-uv run pytest                                           # 193 tests, ~6s
-uv run python scripts/train.py --baselines              # reproduce the comparison tables
-uv run python scripts/train.py --save clean-unweighted  # promote a run to models/
-```
-
----
-
-## API
+*(Probabilities rounded here; the API returns full precision.)*
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/health` | `200` when the model is loaded, `503` when it is not |
-| `GET` | `/model/info` | Model type, threshold, and the 24 feature names in order |
+| `GET` | `/health` | `200` only when the model is loaded, `503` otherwise |
+| `GET` | `/model/info` | Model type, threshold and the 24 features in order |
 | `POST` | `/predict` | Score one application |
-| `POST` | `/predict/batch` | Score up to 100 applications in one call |
-| `POST` | `/regulation/search` | Passages of the GDPR and the AI Act bearing on a question, with citations |
-| `GET` | `/` · `/docs` · `/redoc` | Service metadata and OpenAPI documentation |
+| `POST` | `/predict/batch` | Score up to 100 applications |
+| `POST` | `/regulation/search` | GDPR / AI Act passages relevant to a question, with citations |
+| `GET` | `/docs` · `/redoc` | OpenAPI documentation, generated from the Pydantic schemas |
 
-![The /predict request body in the generated OpenAPI documentation](assets/swagger_predict.png)
+- **Validation from training ranges.** Input bounds live in [`src/config.py`](src/config.py) and
+  match the data the model saw. For example, `loan_int_rate` must be a percentage (8.0, not 0.08):
+  a fraction gets a `422` instead of a silently wrong score.
+- **Rate limiting.** 60 requests per minute per client (`429` with `Retry-After`); `/health` is
+  exempt because ECS uses it to keep the task alive.
 
-![The 200 response returned by the running service](assets/swagger_response.png)
+![The /predict endpoint in the generated OpenAPI documentation, on the deployed service](assets/swagger_predict.png)
 
-Both are the deployed task rather than a local run, and the case shown is an approval — the opposite
-end of the range from the rejection returned by the `curl` above. The response headers carry the
-wildcard origin with no credentials header, which is the CORS posture
-[Limitations](#limitations-and-open-work) records.
+Other useful commands. Retraining and monitoring need the dataset in `data/`: run the
+[ingestion](notebooks/data_ingestion.ipynb) and
+[feature engineering](notebooks/feature_engineering.ipynb) notebooks first (Kaggle credentials
+required).
 
-Pydantic v2 schemas are the contract and FastAPI generates the documentation from them, so it cannot
-drift from what the service accepts. Bounds live in [`src/config.py`](src/config.py) to match the
-ranges seen in training: `loan_int_rate` has a floor of 1.0 rather than 0 because training data runs
-5.42 to 23.22 in percent units, so a caller sending a fraction (`0.08` for 8%) gets a `422` instead of
-a value silently scaled 3.5 standard deviations below anything the model has seen.
-
-**Every route but `/health` is capped at 60 requests a minute per client address**, answered with `429`
-and a `Retry-After`; a regulation search costs about 0.3 s of the task's half vCPU, so that holds one
-caller near a third of the CPU a minute contains. `/health` is exempt because ECS reads it to decide
-whether the task lives. It stops a careless client, not a distributed flood — that is a WAF's job, and
-a WAF attaches to a load balancer this architecture does not have.
+```bash
+uv run pytest                                           # 195 tests
+uv run python scripts/train.py --baselines              # reproduce the comparison tables
+uv run python scripts/train.py --save clean-unweighted  # promote a run to models/
+uv run mlflow ui --backend-store-uri sqlite:///mlflow.db   # browse experiments at :5000
+uv run python -m src.model_monitoring                   # Evidently report -> results/
+```
 
 ---
 
-## LLM surface: explanations and regulatory grounding
+## Deployment
 
-An MCP server ([`src/mcp_server.py`](src/mcp_server.py)) exposes the model to LLM clients such as
-Claude Desktop or Claude Code over JSON-RPC on stdio. There is no LLM on this side: the client's own
-model reads the tool descriptions and decides when to call them, which makes those descriptions prompt
-surface rather than developer documentation.
+Every push to `main` that passes CI goes through this pipeline in GitHub Actions:
 
-| Tool | What it answers |
-|---|---|
-| `assess_loan_application` | Probability of default, the decision at the tuned threshold, and the reason codes that drove it |
-| `get_model_info` | The model itself — type, threshold, features |
-| `search_regulation` | The GDPR and EU AI Act passages bearing on a question, each with its citation. Takes an optional hypothetical passage the calling model writes first |
+1. **CI:** ruff lint and format check, then the full pytest suite with coverage.
+2. **Build** the Docker image (multi-stage; MLflow, Evidently and other dev tools stay out of it).
+3. **Smoke test the real image:** start the container, call `/health`, `/predict` and
+   `/regulation/search`, then run it again with **no network** to prove nothing is downloaded at
+   startup.
+4. **Push** to Amazon ECR and **deploy** a new task definition to ECS Fargate (eu-west-1), waiting
+   until the service is stable.
 
-**Reason codes, not raw SHAP.** [`src/explainer.py`](src/explainer.py) runs exact TreeSHAP against the
-native booster and groups per-feature contributions into named reasons. The client receives derived
-reasons, never the raw application, so no personal data reaches an external model and the LLM only
-verbalises figures already computed. The tool description states that contributions are log-odds: they
-add up, but they are not shares of the probability. Below, an LLM client calls
-`assess_loan_application` and reports the decision, the tuned threshold and the drivers in order —
-every figure in that answer came from the tool.
+Step 3 replaced a check that only ran `import src`, which passes even when the model files are
+missing from the image. Because Fargate gives each new task a new IP, an EventBridge rule triggers a
+small Lambda ([`infra/dns_updater/`](infra/dns_updater/)) that keeps a stable hostname pointing at
+the running task. A live instance is available on request.
 
-![An LLM client scoring an application through the MCP server and reporting its reason codes](assets/mcp_assessment.png)
+![The service running on ECS Fargate](assets/fargate_service.png)
 
-**The corpus.** The GDPR and the AI Act from EUR-Lex, split on their own legal structure — article,
-recital, annex — rather than on a fixed window, and budgeted with the real tokenizer: **759 passages,
-none truncated**, each carrying its citation, source URL and consultation date. Search is an exact
-cosine scan over `BAAI/bge-small-en-v1.5`; recitals are demoted relative to articles, because
-explanatory prose reads like a question and outranks the provision that binds.
+---
 
-### Two signals, because ranking and abstention are different problems
+## Regulatory search (RAG)
+
+A credit model is subject to the GDPR (automated decisions, Article 22) and the EU AI Act (credit
+scoring is high-risk). This layer retrieves the provisions relevant to a question, each with its
+citation, source URL and retrieval date, so every answer can be checked against EUR-Lex.
+
+- **Corpus.** Both acts from EUR-Lex, split along their legal structure (article, recital, annex)
+  into **759 passages**, none truncated.
+- **Retrieval.** Dense embeddings (`BAAI/bge-small-en-v1.5`, via fastembed) with an exact cosine
+  search. Recitals are ranked below articles, which are the binding text.
+- **HyDE.** Users ask in business language the law never uses (*postal code*, *AUC*, *vendor*). The
+  calling LLM first writes the passage it expects to find, and the search matches on that.
+  Held-out hit-rate@5 rises from **72% to 98%**, and holds with a second, independently written set
+  of passages.
+- **Knowing when not to answer.** Below a tuned similarity threshold, or when the question asks
+  *what did we do* instead of *what does the law require*, the tool returns no passages and says
+  why. A citation that looks relevant but isn't is worse than no answer.
+- **Measured, not assumed.** A hand-labelled set of **161 questions** (a third deliberately
+  unanswerable) split into fitting and held-out parts. On the 67 held-out questions, the full path
+  gives the right outcome (correct passage or correct refusal) for **48**, against 39 for the
+  baseline path.
 
 ```mermaid
 flowchart LR
-    q["Question<br/><i>business language</i>"]
-    hp["Hypothetical passage<br/><i>written by the calling model</i>"]
-    rank["Rank<br/>cosine over 759 passages"]
-    veto{"Veto<br/>score · modality"}
-    ans["5 passages<br/>with citations"]
-    quiet["No passages<br/>+ a note saying why"]
-
-    q --> hp --> rank --> veto
-    q -.->|"keeps the veto"| veto
-    veto -->|"groundable<br/>and deontic"| ans
-    veto -->|"otherwise"| quiet
+    q["Question"] --> hp["Hypothetical passage<br/><i>written by the LLM</i>"] --> rank["Rank 759 passages"] --> veto{"Answerable?<br/>score · grammar"}
+    q -.-> veto
+    veto -->|yes| ans["Top 5 passages<br/>with citations"]
+    veto -->|no| quiet["No passages<br/>+ the reason"]
 ```
 
-Questions arrive in business language the legislation never uses — *postal code*, *AUC*, *vendor*
-appear nowhere in the corpus — so `search_regulation` accepts an optional `hypothetical_passage`: the
-provision the calling model expects to find, written in the register of the law. Matching passage
-against passage lifts hit-rate@5 on the held-out split from **72.0% to 98.0%**, and survives a change
-of writer: a second batch of 161 passages, written with no sight of the corpus, the retriever or the
-first batch, finds the same 49 of the 50 answerable questions.
+The same search is available to LLM clients (Claude Desktop, Claude Code…) through an
+[MCP server](src/mcp_server.py) and to any HTTP client through `POST /regulation/search`; both share
+one payload builder, so they never drift apart. [`.mcp.json`](.mcp.json) registers the server for
+any MCP client opened in this repo.
 
-![The MCP server answering a question about automated decisions with GDPR Article 22 and its related provisions](assets/mcp_regulation_answer.png)
+<p>
+  <img src="assets/mcp_regulation_answer.png" alt="Answering a question about automated decisions with GDPR Article 22" width="49%">
+  <img src="assets/mcp_regulation_abstains.png" alt="Declining a question about Basel capital requirements, which the corpus does not cover" width="49%">
+</p>
 
-The passages carry the citation, the source and the date they were consulted, so every line of that
-answer can be checked against EUR-Lex. The closing caveat is the corpus speaking through the client:
-these provisions say what the law requires, and cannot say what this system actually does.
+**Left:** a question about contesting an automated rejection, answered with GDPR Article 22 and
+related provisions. **Right:** a question about Basel capital requirements, which these two acts do
+not cover. The tool returns nothing and the client says so instead of inventing a figure.
 
-The invented passage takes the ranking and the real question keeps the veto: it ranks groundable
-questions slightly worse (AUC 0.71 against 0.77) and still cuts better, because every threshold fitted
-to the passage serves more wrong citations — 23.6 against 19.1 per fold.
+<details>
+<summary><b>Alternatives built, measured and dropped</b></summary>
 
-### Staying quiet is a measured outcome, not a fallback
-
-Below a tuned similarity threshold the tool returns **no passages at all**, and says so: most questions
-put to a system like this are about the product, the model or the business, and a provision cited for
-one of those reads as grounding while being none. The measure is a hand-labelled set of **161
-questions**, 94 fitting and 67 held out, written like what the tool receives — terse fragments,
-paragraph-long rambles, false premises, banking jargon, and a third the corpus cannot answer, each with
-a note justifying that label.
-
-![The MCP server declining to answer a question about Basel capital requirements, with no passages returned](assets/mcp_regulation_abstains.png)
-
-Asked what capital the Basel framework requires, the tool returns nothing and says which refusal
-happened. The client reports that it has no text to quote rather than reaching for a figure — which is
-the whole point: a corpus of the GDPR and the AI Act has no Basel standards in it, and a plausible
-number here would be worse than silence.
-
-A second veto reads the **grammar** of the question rather than its meaning. The corpus states what the
-law requires, so it answers *must we do X* and structurally cannot answer *did we do X* — for which it
-returns the provision governing X, a match every relevance model endorses, a cross-encoder included.
-Similarity to three deontic prototypes minus similarity to three evidential ones separates them, and
-beats the corpus score alone on 7 cross-validated seeds of 8. End to end, the pair handles **48 of 67
-held-out questions correctly against 39** for the plain path: 41 right where the plain path gets 21,
-and two fewer wrong citations doing it.
-
-### What was built, measured and dropped
-
-Every row was implemented and ablated against the golden set with the threshold re-fitted on the
-fitting split — judging a variant at another variant's threshold is the unfair comparison of choice.
+Each was implemented and evaluated on the same question set, with thresholds re-fitted for it.
 
 | Variant | Why it was dropped |
 |---|---|
-| **BM25 hybrid** (~45 lines, no new dependency) | Loses at every weighting — 47.8% dense against 34.8% for the best RRF blend — and degrades monotonically in the BM25 weight. The words that discriminate in real questions (*postal*, *auc*, *vendor*, *revalidated*) are not in the corpus at all |
-| **Cross-encoder reranker** (3 models) | 1 GB and 5.8 s per query against microseconds, and it *loses to the bare cosine on abstention* (24/31 against 25/31) — the one thing it was brought in for |
-| **Separate heading vector** | No blend improves. Six words and four hundred words land in different regions of the space, so the max compares incomparable scales; only 380 of 759 chunks have a heading |
-| **Widening the corpus** with an internal credit policy | Degrades: 15 chunks, 1.9% of the corpus, take 28.7% of the top-5; hit-rate 63.2 → 59.2% and wrong citations 9 → 20. Internal policy is evidence of compliance, never the source of the obligation |
-| **A larger embedding model** (5 encoders) | None beats `bge-small` on test, scale is not monotonic, the three 1024-dim models make abstention *worse*, and they cost 15-37× per query |
-| **A second veto** on ranking agreement | 35/42 on the earlier, smaller question set — then 5 folds × 8 seeds: loses 7, ties 1, wins 0. An artifact of a small, uniform set, retracted before it was committed |
-| **Expanding cross-references** | Tripled overclaiming: with twice the material the model shifts from citing to interpreting |
+| BM25 + dense hybrid | Worse at every weighting: the words that matter in real questions never appear in the law |
+| Cross-encoder reranker (3 models) | 1 GB and 5.8 s per query, and *worse* at knowing when to abstain |
+| Larger embedding models (5) | None beat `bge-small` on the held-out set; 15–37× slower per query |
+| Adding an internal credit policy to the corpus | 1.9% of passages took 28.7% of top-5 slots; wrong citations rose from 9 to 20 |
+| Expanding cross-references | Doubled the returned text and tripled over-claiming by the LLM |
+| Separate heading vectors | No weighting improved retrieval |
+| A second abstention check (ranking agreement) | Looked better on a small set; lost on 7 of 8 seeds once re-tested |
 
-### One payload, two transports
+</details>
 
-`POST /regulation/search` returns what `search_regulation` returns, built by one method both callers
-share: the same text served under one citation on stdio and another over HTTP is the drift indirection
-exists to prevent. The docstring and field descriptions become the OpenAPI description — the REST
-equivalent of a tool description, and a weaker channel, since a caller is free not to read it.
+---
 
-The index is versioned alongside the model, because CD builds from a fresh checkout and anything
-generated is absent from it. Rebuild it with the corpus, never alone: `from_files()` compares chunk ids
-and refuses a mismatched pair, since an index built from a stale corpus serves right-looking text under
-the wrong citation. [`.mcp.json`](.mcp.json) registers the server for any MCP client opened here.
+## Monitoring
 
-```bash
-uv run python -m scripts.ingest_corpus   # rebuild corpus/ and its vector index
+[`src/model_monitoring.py`](src/model_monitoring.py) builds an Evidently report (data drift +
+classification quality) that scores the training and test sets with the shipped model at its tuned
+threshold. Requests to the live service are not logged yet, so the report checks the pipeline, not
+production traffic; capturing requests is the next step.
+
+---
+
+## Project structure
+
+```text
+src/
+  preprocessing.py     feature engineering + input validation (shared by training and serving)
+  predictor.py         loads the versioned bundle and scores applications
+  explainer.py         SHAP reason codes
+  retriever.py         legal corpus search (RAG)
+  mcp_server.py        MCP tools for LLM clients
+  model_monitoring.py  Evidently report
+  api/                 FastAPI app and Pydantic schemas
+scripts/               train.py · ingest_corpus.py · evaluate_retrieval.py · plot_results.py
+notebooks/             ingestion → EDA → feature engineering → model selection
+models/                the versioned model bundle served by the API
+corpus/                legal passages, vector index and the labelled question set
+results/               comparison tables behind the model metrics in this README
+infra/dns_updater/     Lambda that keeps a stable hostname for the Fargate task
+tests/                 pytest suite
+.github/workflows/     ci.yml · cd.yml
 ```
 
-The embedding model is baked into the image rather than fetched on first use, so an unreachable
-HuggingFace cannot keep a task from starting. The corpus warms in a background thread at startup, since
-loading it costs 12.6 s on the task's 0.5 vCPU. Retrieval adds 205 MB to the image and resident memory
-settles at ~345 MB of the task's 1024, against ~130 MB for scoring alone; a search costs about what a
-prediction costs.
-
 ---
 
-## Stack and data
+## Tech stack
 
-| Layer | Tools |
+| Area | Tools |
 |---|---|
-| Modelling | XGBoost, scikit-learn, pandas, NumPy |
-| Tracking · monitoring | MLflow, Evidently |
+| Data & modelling | pandas, NumPy, scikit-learn, XGBoost (with its built-in TreeSHAP), matplotlib |
+| Experiment tracking & monitoring | MLflow, Evidently |
 | Serving | FastAPI, Pydantic v2, uvicorn |
-| LLM surface | MCP SDK, SHAP, fastembed |
-| Packaging · quality | uv, Docker multi-stage, pytest, ruff |
-| Delivery | GitHub Actions, Amazon ECR, ECS Fargate (eu-west-1), Lambda, EventBridge |
-
-The [Credit Risk Dataset](https://www.kaggle.com/datasets/laotse/credit-risk-dataset) from Kaggle:
-32,581 loan applications, 11 features, binary `loan_status` target. Cleaning leaves **31,679 rows at a
-21.5% default rate** (3.64:1). Feature engineering adds five derived columns, expanding to 40 after
-one-hot encoding; a three-stage filter (correlation, tree importance, variance) fitted on the training
-split alone reduces that to 18, and one-hot blocks left partially selected are restored whole, giving
-the **24 features** the model uses. Raw data is not committed.
+| GenAI | fastembed (`bge-small-en-v1.5`), MCP SDK |
+| Engineering | uv, Docker (multi-stage), pytest, ruff |
+| Cloud & CI/CD | GitHub Actions, Amazon ECR, ECS Fargate, Lambda, EventBridge |
 
 ---
 
-## Limitations and open work
+## Limitations and next steps
 
-- **Most of the suite mocks `joblib.load`** with an autouse fixture, so it exercises the code paths
-  rather than the shipped model. `tests/test_inference_real.py` opts out and pins six applications to
-  the probabilities the real bundle assigns them; the rest proves nothing about the artifacts.
-- **Grade F is under-predicted** by 0.068 on the 51 test rows that carry it. Restoring the one-hot
-  block stopped F and G being scored as B, but 7 sparse dummies share no strength between neighbouring
-  grades; an ordinal encoding with `monotone_constraints` is the follow-up.
-- **The retrieval knows when to answer far better than when to stay quiet.** Of the 18 held-out
-  questions it should refuse, it refuses 7. The modality veto that lifted that from 4 also refuses two
-  questions that are plainly deontic, because a bi-encoder reads their topic more strongly than their
-  grammar.
-- **Wrong citations get flagged by the calling model; missing cross-references do not.** 48 answers
-  graded blind put **13 of the 13 wrong-citation cases** on record as flagging the gap rather than
-  asserting the law. What they get wrong is following a reference: a passage says *without prejudice
-  to Article 78* and the model fills in Article 78 from memory. One generator, one pass, graded by a
-  model of the same family.
-- **The retrieval numbers are read on question sets that no longer surprise it.** Thresholds were
-  fitted on the fitting split, but the held-out split has been read repeatedly, and a set looked at
-  many times stops being held out.
-- **Nothing enforces how a caller uses the passages.** Over MCP the tool description travels with every
-  call; over HTTP it lives only in the OpenAPI description, which a client can ignore.
-- **The deployed service is only lightly guarded.** `allow_origins` is `["*"]` — with
-  `allow_credentials=False`, which keeps that wildcard legal — and the 60-per-minute cap is the only
-  thing in front of the half vCPU. It serves plain HTTP; a certificate needs a domain and something to
-  terminate TLS.
-- **The Evidently report watches the pipeline, not live traffic.** It scores the training and held-out
-  test splits with the shipped model at its tuned threshold. Both come from one stratified random
-  split, so drift reads near zero by construction; served requests are not captured, so there is no
-  production window to compare yet.
+- **Most tests mock the model.** Model loading is mocked by default, so the suite checks code
+  paths rather than the shipped model; the 11 tests in
+  [`tests/test_inference_real.py`](tests/test_inference_real.py) load the real bundle and pin known
+  applications to their probabilities.
+- **Grade F is slightly under-predicted** (by 6.8 points on 51 test rows). One-hot encoding shares
+  nothing between neighbouring grades; an ordinal encoding with monotonic constraints is the next
+  experiment.
+- **The retrieval layer is better at answering than at abstaining.** It correctly refuses 7 of the
+  18 held-out questions it should refuse. The held-out questions have also been read many times, so
+  a fresh question set is needed for an unbiased figure.
+- **No production feedback loop yet.** Live requests are not logged, so there is no drift
+  monitoring on real traffic and no record of what users ask the regulatory search.
+- **Light network hardening.** The service runs over plain HTTP with a per-client rate limit and
+  no load balancer; TLS and a WAF would come with an Application Load Balancer and a domain.
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).
 
 ## Author
 
-**Antonio Albaladejo Soriano** ·
-[LinkedIn](https://www.linkedin.com/in/antonio-albaladejo-soriano-3133211b7/)
+**Antonio Albaladejo Soriano** · [LinkedIn](https://www.linkedin.com/in/antonio-albaladejo-soriano-3133211b7/)
